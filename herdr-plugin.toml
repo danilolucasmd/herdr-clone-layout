@@ -1,0 +1,35 @@
+id = "herdr-clone-layout"
+name = "Clone Layout"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Every new workspace/worktree inherits the tab + pane-split geometry of the workspace you were just in (geometry only — panes open as bare shells)."
+platforms = ["linux", "macos"]
+
+# CLI worktree/workspace creation emits worktree.created / workspace.created;
+# the in-app "new worktree/workspace" emits only workspace.focused (it focuses
+# the new one on creation). Subscribe to all three; the handler dedupes with an
+# atomic claim and only ever populates a fresh (1-tab/1-pane) workspace.
+[[events]]
+on = "workspace.focused"
+command = ["sh", "bin/clone-layout", "event"]
+
+[[events]]
+on = "workspace.created"
+command = ["sh", "bin/clone-layout", "event"]
+
+[[events]]
+on = "worktree.created"
+command = ["sh", "bin/clone-layout", "event"]
+
+# Manual: duplicate the current workspace's geometry into a brand-new workspace.
+[[actions]]
+id = "apply"
+title = "Duplicate workspace layout"
+contexts = ["workspace"]
+command = ["sh", "bin/clone-layout", "apply"]
+
+[[keys.command]]
+key = "prefix+shift+d"
+type = "plugin_action"
+command = "herdr-clone-layout.apply"
+description = "duplicate workspace layout into a new workspace"

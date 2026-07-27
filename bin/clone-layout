@@ -1,0 +1,243 @@
+#!/usr/bin/env sh
+# herdr-clone-layout — give every new workspace/worktree the same *geometry* as
+# the workspace you were just in: the same tabs (labels + order) and the same
+# pane split arrangement (directions + ratios). Panes open as bare shells — no
+# commands are re-run (geometry only).
+#
+# Modes:
+#   event   Driven by herdr via HERDR_PLUGIN_EVENT_JSON. On workspace.focused it
+#           records the focus; on workspace.created / worktree.created it clones
+#           the previously-focused workspace into the new (fresh) one.
+#   apply   Manual: duplicate the current workspace into a brand-new workspace.
+#
+# Deps: herdr CLI + jq. POSIX sh (no arrays; pane handles are eval'd vars).
+
+set -u
+
+HERDR="${HERDR_BIN_PATH:-herdr}"
+# herdr exports HERDR_PLUGIN_ROOT and runs the hook with it as the working
+# directory; fall back to this script's own location so a direct invocation
+# (tests, manual runs) also finds plan.jq.
+ROOT=${HERDR_PLUGIN_ROOT:-$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)}
+PLAN_JQ="$ROOT/lib/plan.jq"
+STATE="${HERDR_PLUGIN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-clone-layout}"
+mkdir -p "$STATE/claimed" 2>/dev/null || true
+FOCUS_FILE="$STATE/focus-history"
+LOG_FILE="$STATE/clone-layout.log"
+
+# On by default — a headless hook leaves no other trace of what it did.
+# Set HERDR_CLONE_LAYOUT_LOG=0 to silence it.
+log() {
+  [ "${HERDR_CLONE_LAYOUT_LOG:-1}" = "0" ] && return 0
+  printf '%s %s\n' "$(date +%H:%M:%S)" "$*" >>"$LOG_FILE" 2>/dev/null || true
+}
+
+# Keep the log bounded; trimmed once per invocation, not once per line.
+trim_log() {
+  [ -f "$LOG_FILE" ] || return 0
+  lines=$(wc -l <"$LOG_FILE" 2>/dev/null) || return 0
+  [ "${lines:-0}" -gt 500 ] 2>/dev/null || return 0
+  tail -n 500 "$LOG_FILE" >"$LOG_FILE.tmp" 2>/dev/null && mv "$LOG_FILE.tmp" "$LOG_FILE"
+}
+
+# Full snapshot's .snapshot object (tabs/panes/workspaces/layouts/focus).
+snapshot() { "$HERDR" api snapshot 2>/dev/null | jq -c '.result.snapshot'; }
+
+# ----------------------------------------------------------------------------
+# focus history: one workspace id per line, most-recent last, capped at 20.
+# ----------------------------------------------------------------------------
+record_focus() {
+  ws=$1
+  [ -n "$ws" ] || return 0
+  last=$(tail -n 1 "$FOCUS_FILE" 2>/dev/null)
+  [ "$last" = "$ws" ] && return 0
+  printf '%s\n' "$ws" >>"$FOCUS_FILE"
+  tail -n 20 "$FOCUS_FILE" >"$FOCUS_FILE.tmp" 2>/dev/null && mv "$FOCUS_FILE.tmp" "$FOCUS_FILE"
+}
+
+# Is $ws worth cloning from? (exists and has >1 tab or >1 pane)
+ws_is_populated() { # snap ws
+  printf '%s' "$1" | jq -e --arg w "$2" \
+    'any(.workspaces[]; .workspace_id == $w and (.tab_count > 1 or .pane_count > 1))' \
+    >/dev/null 2>&1
+}
+
+# Is $ws a fresh, untouched workspace? (exactly 1 tab and 1 pane)
+ws_is_fresh() { # snap ws
+  printf '%s' "$1" | jq -e --arg w "$2" \
+    'any(.workspaces[]; .workspace_id == $w and .tab_count == 1 and .pane_count == 1)' \
+    >/dev/null 2>&1
+}
+
+# Choose the workspace to clone from: the currently-focused one if it isn't the
+# new workspace, otherwise the most recent distinct entry in the focus history.
+# Only a populated workspace qualifies. Echoes the id (may be empty).
+pick_source() { # snap new
+  snap=$1; new=$2
+  focused=$(printf '%s' "$snap" | jq -r '.focused_workspace_id // empty')
+  { printf '%s\n' "$focused"; awk '{a[NR]=$0} END{for(i=NR;i>=1;i--)print a[i]}' "$FOCUS_FILE" 2>/dev/null; } \
+  | while IFS= read -r c; do
+      [ -n "$c" ] || continue
+      [ "$c" = "$new" ] && continue
+      if ws_is_populated "$snap" "$c"; then printf '%s\n' "$c"; break; fi
+    done | head -n 1
+}
+
+# ----------------------------------------------------------------------------
+# building blocks — extract new ids via snapshot diff (output-shape agnostic)
+# ----------------------------------------------------------------------------
+ws_tab_ids()  { snapshot | jq -c --arg w "$1" '[.tabs[]  | select(.workspace_id == $w) | .tab_id]'; }
+ws_pane_ids() { snapshot | jq -c --arg w "$1" '[.panes[] | select(.workspace_id == $w) | .pane_id]'; }
+
+create_tab() { # target label  -> new tab id
+  target=$1; label=$2
+  before=$(ws_tab_ids "$target")
+  if [ -n "$label" ]; then
+    "$HERDR" tab create --workspace "$target" --label "$label" >/dev/null 2>&1
+  else
+    "$HERDR" tab create --workspace "$target" >/dev/null 2>&1
+  fi
+  snapshot | jq -r --argjson b "$before" --arg w "$target" \
+    '([.tabs[] | select(.workspace_id == $w) | .tab_id] - $b)[0] // empty'
+}
+
+tab_root_pane() { # tab -> pane id
+  snapshot | jq -r --arg t "$1" '[.panes[] | select(.tab_id == $t) | .pane_id][0] // empty'
+}
+
+split_pane() { # target parent dir ratio -> new pane id
+  target=$1; parent=$2; dir=$3; ratio=$4
+  before=$(ws_pane_ids "$target")
+  "$HERDR" pane split "$parent" --direction "$dir" --ratio "$ratio" --no-focus >/dev/null 2>&1
+  snapshot | jq -r --argjson b "$before" --arg w "$target" \
+    '([.panes[] | select(.workspace_id == $w) | .pane_id] - $b)[0] // empty'
+}
+
+# ----------------------------------------------------------------------------
+# clone: rebuild source's tab/pane geometry inside the fresh target workspace
+# ----------------------------------------------------------------------------
+do_clone() { # snap source target
+  snap=$1; source=$2; target=$3
+  plan=$(jq -n --argjson snap "$snap" --arg ws "$source" -f "$PLAN_JQ" 2>/dev/null)
+  [ -n "$plan" ] || { log "no plan for $source"; return 0; }
+  ntabs=$(printf '%s' "$plan" | jq 'length' 2>/dev/null)
+  [ "${ntabs:-0}" -gt 0 ] 2>/dev/null || { log "empty plan for $source"; return 0; }
+  log "clone $source -> $target ($ntabs tabs)"
+
+  root_tab=$(snapshot | jq -r --arg w "$target" '[.tabs[] | select(.workspace_id == $w)] | sort_by(.number)[0].tab_id')
+
+  i=0
+  printf '%s' "$plan" | jq -c '.[]' | while IFS= read -r tab; do
+    label=$(printf '%s' "$tab" | jq -r '.label // ""')
+    if [ "$i" -eq 0 ]; then
+      cur_pane=$(snapshot | jq -r --arg t "$root_tab" '[.panes[] | select(.tab_id == $t) | .pane_id][0] // empty')
+      [ -n "$label" ] && "$HERDR" tab rename "$root_tab" "$label" >/dev/null 2>&1
+    else
+      new_tab=$(create_tab "$target" "$label")
+      [ -n "$new_tab" ] || { log "tab create failed"; i=$((i + 1)); continue; }
+      cur_pane=$(tab_root_pane "$new_tab")
+    fi
+    [ -n "$cur_pane" ] || { log "no root pane for tab $i"; i=$((i + 1)); continue; }
+
+    # Replay split steps. Pane handles live in eval'd vars H0, H1, ...; they
+    # persist across iterations within this single subshell (the `while` pipe).
+    eval "H0=\$cur_pane"
+    printf '%s' "$tab" | jq -c '.steps[]?' | while IFS= read -r step; do
+      p=$(printf '%s'  "$step" | jq -r '.parent')
+      d=$(printf '%s'  "$step" | jq -r '.dir')
+      r=$(printf '%s'  "$step" | jq -r '.ratio')
+      c=$(printf '%s'  "$step" | jq -r '.child')
+      eval "pp=\$H$p"
+      # shellcheck disable=SC2154  # pp is assigned by the eval on the line above
+      np=$(split_pane "$target" "$pp" "$d" "$r")
+      if [ -n "$np" ]; then
+        eval "H$c=\$np"
+      else
+        log "split failed parent=$pp $d $r"
+      fi
+    done
+    i=$((i + 1))
+  done
+  # Show the first tab — but only if the user is already on this workspace, so a
+  # workspace built in the background (CLI create) never steals their focus.
+  if [ "$(snapshot | jq -r '.focused_workspace_id // empty')" = "$target" ]; then
+    "$HERDR" tab focus "$root_tab" >/dev/null 2>&1 || true
+  fi
+}
+
+# A claim guards the brief build window so overlapping events for the same new
+# workspace don't clone it twice. It is released once the build finishes — the
+# durable "already done" guard is ws_is_fresh (a built workspace is no longer
+# fresh), so claims never linger and a recycled workspace id can't be blocked by
+# a stale one.
+claim_dir() { printf '%s/claimed/%s' "$STATE" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+claim()   { mkdir "$(claim_dir "$1")" 2>/dev/null; }   # atomic; non-zero if held
+unclaim() { rmdir "$(claim_dir "$1")" 2>/dev/null || true; }
+
+# Populate a workspace that has just appeared or been focused, if it is a fresh
+# (1-tab/1-pane) workspace and a populated source is known. The claim is taken
+# only once we're about to clone, so: overlapping events for the same new
+# workspace dedupe (loser bails), yet a focus with no source yet stays eligible
+# to be cloned on a later event once a source exists.
+try_populate() { # new_ws
+  new=$1
+  [ -n "$new" ] || return 0
+  snap=$(snapshot)
+  ws_is_fresh "$snap" "$new" || { log "$new not fresh, skip"; return 0; }
+  source=$(pick_source "$snap" "$new")
+  [ -n "$source" ] || { log "no source to clone for $new"; return 0; }
+  claim "$new" || { log "already claimed $new"; return 0; }
+  do_clone "$snap" "$source" "$new"
+  unclaim "$new"
+}
+
+# ----------------------------------------------------------------------------
+# entrypoints
+# ----------------------------------------------------------------------------
+# Test hook: `CLONE_LAYOUT_SOURCE=1 . bin/clone-layout` loads the functions
+# without running an entrypoint.
+if [ "${CLONE_LAYOUT_SOURCE:-}" = "1" ]; then return 0; fi
+
+# jq does the whole geometry analysis; without it the plugin can do nothing.
+if ! command -v jq >/dev/null 2>&1; then
+  printf 'herdr-clone-layout: jq not found on PATH — install jq (https://jqlang.github.io/jq/)\n' >&2
+  exit 1
+fi
+
+trim_log
+
+mode=${1:-event}
+case "$mode" in
+  event)
+    ev=$(printf '%s' "${HERDR_PLUGIN_EVENT_JSON:-}" | jq -r '.event // empty' 2>/dev/null)
+    ws=$(printf '%s' "${HERDR_PLUGIN_EVENT_JSON:-}" | jq -r \
+        '.data.workspace_id // .data.workspace.workspace_id // empty' 2>/dev/null)
+    case "$ev" in
+      # Record the newly-focused workspace, then try to populate it: the TUI
+      # "new worktree/workspace" path emits ONLY workspace.focused (it focuses
+      # the new one), so cloning has to happen here too. pick_source skips the
+      # new id and finds the previously-focused workspace as the clone source.
+      workspace_focused|workspace.focused) record_focus "$ws"; try_populate "$ws" ;;
+      # CLI path: the new workspace isn't focused yet, so the still-focused
+      # source is found via .focused_workspace_id inside pick_source.
+      workspace_created|workspace.created|worktree_created|worktree.created) try_populate "$ws" ;;
+      *) : ;;
+    esac
+    ;;
+  apply)
+    # Duplicate the current workspace into a new one.
+    snap=$(snapshot)
+    source=$(printf '%s' "$snap" | jq -r '.focused_workspace_id // empty')
+    [ -n "$source" ] || exit 0
+    before=$(snapshot | jq -c '[.workspaces[].workspace_id]')
+    "$HERDR" workspace create --focus >/dev/null 2>&1
+    new=$(snapshot | jq -r --argjson b "$before" '([.workspaces[].workspace_id] - $b)[0] // empty')
+    [ -n "$new" ] || exit 0
+    if claim "$new"; then
+      do_clone "$(snapshot)" "$source" "$new"
+      unclaim "$new"
+      "$HERDR" workspace focus "$new" >/dev/null 2>&1 || true
+    fi
+    ;;
+  *) printf 'usage: %s [event|apply]\n' "$0" >&2; exit 2 ;;
+esac

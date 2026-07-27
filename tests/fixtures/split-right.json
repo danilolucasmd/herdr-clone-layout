@@ -1,0 +1,28 @@
+{
+  "name": "a side-by-side split replays as one 'right' step at the reported ratio",
+  "ws": "w1",
+  "snapshot": {
+    "tabs": [
+      { "tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "agent" }
+    ],
+    "layouts": [
+      {
+        "tab_id": "w1:t1",
+        "workspace_id": "w1",
+        "zoomed": false,
+        "area": { "x": 0, "y": 0, "width": 200, "height": 60 },
+        "focused_pane_id": "w1:p2",
+        "panes": [
+          { "pane_id": "w1:p1", "focused": false, "rect": { "x": 0, "y": 0, "width": 130, "height": 60 } },
+          { "pane_id": "w1:p2", "focused": true, "rect": { "x": 130, "y": 0, "width": 70, "height": 60 } }
+        ],
+        "splits": [
+          { "id": "split_0_root", "direction": "right", "ratio": 0.65, "rect": { "x": 0, "y": 0, "width": 200, "height": 60 } }
+        ]
+      }
+    ]
+  },
+  "expected": [
+    { "label": "agent", "steps": [ { "parent": 0, "dir": "right", "ratio": 0.65, "child": 1 } ] }
+  ]
+}

@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # The plugin is POSIX sh, so lint it as such rather than as bash.
+      - name: Shellcheck
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck --shell=sh bin/clone-layout tests/run.sh
+
+      - name: Manifest is valid TOML
+        run: python3 -c "import tomllib,sys; tomllib.load(open('herdr-plugin.toml','rb'))"
+
+      - name: plan.jq parses
+        run: jq -n --argjson snap '{"tabs":[],"layouts":[]}' --arg ws w1 -f lib/plan.jq
+
+      # The geometry analysis, against fixture snapshots. No herdr server needed.
+      - name: Tests
+        run: ./tests/run.sh
