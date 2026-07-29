@@ -12,6 +12,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its `.number` when you drag it to a new position, so manually reordering the
   tabs in a workspace had no effect on the clone — the new workspace came out in
   the order the tabs were originally created in.
+- Stop re-cloning a workspace whose tabs you have just closed. "1 tab and 1
+  pane" was the test for a brand-new workspace, but a workspace you have emptied
+  out looks identical, so closing tabs down to the last one put the whole layout
+  straight back. Workspaces that have held a layout are now remembered and never
+  cloned into again.
+- `apply` no longer risks stacking a second copy of the layout on top of the one
+  the `workspace.created` / `workspace.focused` hooks build for the same new
+  workspace.
+- A failed or empty snapshot is no longer read as "every workspace was closed".
 
 ## [0.1.0] — Unreleased
 

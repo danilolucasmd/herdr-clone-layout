@@ -23,6 +23,7 @@ PLAN_JQ="$ROOT/lib/plan.jq"
 STATE="${HERDR_PLUGIN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-clone-layout}"
 mkdir -p "$STATE/claimed" 2>/dev/null || true
 FOCUS_FILE="$STATE/focus-history"
+KNOWN_FILE="$STATE/populated-workspaces"
 LOG_FILE="$STATE/clone-layout.log"
 
 # On by default — a headless hook leaves no other trace of what it did.
@@ -67,6 +68,48 @@ ws_is_fresh() { # snap ws
   printf '%s' "$1" | jq -e --arg w "$2" \
     'any(.workspaces[]; .workspace_id == $w and .tab_count == 1 and .pane_count == 1)' \
     >/dev/null 2>&1
+}
+
+# ----------------------------------------------------------------------------
+# populated-workspace history
+#
+# "1 tab and 1 pane" says a workspace is EMPTY, not that it is NEW. A workspace
+# the user has closed all their tabs in looks exactly like one herdr just made,
+# so freshness alone would re-clone it and undo the teardown they were doing.
+#
+# So remember every workspace seen holding more than one tab or pane: it has had
+# a layout at some point, and is never a clone target again. A brand-new
+# workspace has never been populated, so it is still eligible.
+#
+# Ids that no longer exist are dropped on every pass, so when herdr recycles a
+# workspace id the reused id correctly counts as new again.
+# ----------------------------------------------------------------------------
+ws_known() { # ws  -> 0 if $ws has held a layout before
+  [ -f "$KNOWN_FILE" ] && grep -qxF "$1" "$KNOWN_FILE" 2>/dev/null
+}
+
+remember_populated() { # snap
+  # Command substitution (not a pipeline) so a jq failure on a malformed or
+  # empty snapshot is actually visible here, instead of being masked by the exit
+  # status of a trailing `sort`.
+  cur=$(printf '%s' "$1" | jq -r '.workspaces[].workspace_id' 2>/dev/null) || return 0
+  # A session always has at least one workspace, so an empty list means the
+  # snapshot failed (server restarting, socket gone) rather than that every
+  # workspace was closed. Bail instead of forgetting the whole history.
+  [ -n "$cur" ] || return 0
+  pop=$(printf '%s' "$1" | jq -r \
+    '.workspaces[] | select(.tab_count > 1 or .pane_count > 1) | .workspace_id' 2>/dev/null) || return 0
+
+  # $$ keeps concurrent hooks off each other's temp files; the mv is atomic, so
+  # the loser of a race just writes an equivalent list a moment later.
+  tmp="$KNOWN_FILE.$$"
+  printf '%s\n' "$cur" | sort -u >"$tmp.cur"
+  { [ -n "$pop" ] && printf '%s\n' "$pop"
+    cat "$KNOWN_FILE" 2>/dev/null
+  } | sort -u >"$tmp.all"
+  # Intersect "has been populated" with "still exists".
+  comm -12 "$tmp.all" "$tmp.cur" >"$tmp" 2>/dev/null && mv "$tmp" "$KNOWN_FILE"
+  rm -f "$tmp" "$tmp.cur" "$tmp.all"
 }
 
 # Choose the workspace to clone from: the currently-focused one if it isn't the
@@ -185,11 +228,16 @@ try_populate() { # new_ws
   new=$1
   [ -n "$new" ] || return 0
   snap=$(snapshot)
+  remember_populated "$snap"
+  ws_known "$new" && { log "$new has held a layout before, skip"; return 0; }
   ws_is_fresh "$snap" "$new" || { log "$new not fresh, skip"; return 0; }
   source=$(pick_source "$snap" "$new")
   [ -n "$source" ] || { log "no source to clone for $new"; return 0; }
   claim "$new" || { log "already claimed $new"; return 0; }
   do_clone "$snap" "$source" "$new"
+  # Record it now rather than waiting for the next event's remember_populated:
+  # an overlapping hook may snapshot before these tabs are visible.
+  printf '%s\n' "$new" >>"$KNOWN_FILE" 2>/dev/null || true
   unclaim "$new"
 }
 
@@ -236,7 +284,15 @@ case "$mode" in
     new=$(snapshot | jq -r --argjson b "$before" '([.workspaces[].workspace_id] - $b)[0] // empty')
     [ -n "$new" ] || exit 0
     if claim "$new"; then
-      do_clone "$(snapshot)" "$source" "$new"
+      # `workspace create --focus` fires workspace.created/focused, so the event
+      # hooks are racing to build this same workspace. If one of them got there
+      # first, don't stack a second copy of the layout on top of it.
+      if ws_is_fresh "$(snapshot)" "$new"; then
+        do_clone "$(snapshot)" "$source" "$new"
+        printf '%s\n' "$new" >>"$KNOWN_FILE" 2>/dev/null || true
+      else
+        log "$new already built, skip duplicate apply"
+      fi
       unclaim "$new"
       "$HERDR" workspace focus "$new" >/dev/null 2>&1 || true
     fi

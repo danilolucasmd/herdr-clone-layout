@@ -23,8 +23,9 @@ workspace you were just in.
 - **CLI and TUI both covered.** The two creation paths emit different events;
   the plugin subscribes to all of them and dedupes, so a layout is built exactly
   once.
-- **Fresh workspaces only.** It builds into a brand-new (1-tab/1-pane) workspace
-  and never touches one you've already arranged.
+- **New workspaces only.** It builds into a brand-new workspace and never
+  touches one you've already arranged — including one you've since closed the
+  tabs in. Emptying a workspace out doesn't make it a clone target again.
 - **Never steals focus.** A workspace created in the background is built in the
   background.
 - **Just the herdr CLI underneath.** The result is ordinary tabs and panes —
@@ -69,9 +70,14 @@ herdr creates workspaces two different ways, and they emit different events:
 So the hook listens for all three. On any of them it:
 
 1. Reads the live session snapshot (`herdr api snapshot`).
-2. Bails unless the workspace is **fresh** — exactly 1 tab and 1 pane. An
-   already-arranged workspace is never touched, so ordinary workspace switching
-   is a no-op.
+2. Bails unless the workspace is **new**. Two things have to hold: it must be
+   *fresh* — exactly 1 tab and 1 pane — and it must never have held a layout
+   before. Freshness alone isn't enough, because a workspace you've closed all
+   your tabs in looks exactly like one herdr just made; without the second test,
+   closing tabs down to the last one would put the whole layout straight back.
+   So every workspace seen holding more than one tab or pane is remembered, and
+   is never cloned into again. Ids of closed workspaces are forgotten, so a
+   recycled workspace id counts as new.
 3. Picks the **source**: the currently-focused workspace, or — when the new one
    already has focus (the TUI path) — the most recent *other* workspace from a
    short focus history. Only a workspace with more than one tab or pane
@@ -85,9 +91,9 @@ So the hook listens for all three. On any of them it:
 ```
  new workspace (CLI or TUI) ──► clone-layout event hook
         ▼
-   snapshot ─► fresh? ─► pick source ─► claim ─► plan.jq ─► replay
-        │                                                     │
-        └── not fresh / no source / already claimed ─► no-op   ▼
+   snapshot ─► new? ─► pick source ─► claim ─► plan.jq ─► replay
+        │                                                    │
+        └── not new / no source / already claimed ─► no-op    ▼
                                             tab 0  → reuse + rename the root tab
                                             tab N  → herdr tab create --label
                                             step   → herdr pane split --direction --ratio
@@ -143,7 +149,7 @@ see [herdr-plugin-workspace-manager](https://github.com/razajamil/herdr-plugin-w
 | Var | Default | Purpose |
 | --- | --- | --- |
 | `HERDR_CLONE_LAYOUT_LOG` | `1` | Set to `0` to disable the activity log. |
-| `HERDR_PLUGIN_STATE_DIR` | set by herdr | Where the focus history, claims, and log live. Falls back to `$XDG_STATE_HOME/herdr-clone-layout`. |
+| `HERDR_PLUGIN_STATE_DIR` | set by herdr | Where the focus history, populated-workspace history, claims, and log live. Falls back to `$XDG_STATE_HOME/herdr-clone-layout`. |
 | `HERDR_PLUGIN_ROOT` | set by herdr | Plugin checkout root; falls back to the script's own directory. |
 | `HERDR_BIN_PATH` | `herdr` | The herdr binary to drive. |
 
@@ -156,8 +162,8 @@ tail -f ~/.local/state/herdr/plugins/herdr-clone-layout/clone-layout.log
 ```
 
 Lines look like `clone w1 -> w7 (4 tabs)`, or a reason it did nothing
-(`w7 not fresh, skip`, `no source to clone for w7`). herdr's own plugin log is
-also worth a look:
+(`w7 not fresh, skip`, `w7 has held a layout before, skip`, `no source to clone
+for w7`). herdr's own plugin log is also worth a look:
 
 ```sh
 herdr plugin log list --plugin herdr-clone-layout
@@ -167,9 +173,10 @@ The log is trimmed to its last 500 lines on each run.
 
 ## Notes & limitations
 
-- **Only fresh workspaces are populated.** If a workspace already has more than
-  one tab or pane, it's left alone — including after a restart that restores
-  your session.
+- **Only genuinely new workspaces are populated.** A workspace that already has
+  more than one tab or pane is left alone — including after a restart that
+  restores your session — and so is one that used to, however few tabs you've
+  left in it since.
 - **A zoomed tab clones as a single pane.** herdr reports the zoomed pane as
   filling the tab, so that's the geometry the plugin sees. Unzoom before cloning
   if you want the full split arrangement.
