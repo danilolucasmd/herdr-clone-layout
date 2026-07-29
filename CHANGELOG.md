@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Clone tabs in tab-bar display order instead of `.number` order. A tab keeps
+  its `.number` when you drag it to a new position, so manually reordering the
+  tabs in a workspace had no effect on the clone — the new workspace came out in
+  the order the tabs were originally created in.
+
 ## [0.1.0] — Unreleased
 
 First public release.

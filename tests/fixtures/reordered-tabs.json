@@ -1,12 +1,12 @@
 {
-  "name": "tabs come out in tab-bar display order with their labels, ignoring other workspaces",
+  "name": "manually reordered tabs clone in the new order, not the order they were created in",
   "ws": "w1",
   "snapshot": {
     "tabs": [
-      { "tab_id": "w1:t3", "workspace_id": "w1", "number": 3, "label": "nvim" },
       { "tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "agent" },
-      { "tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "other-workspace" },
-      { "tab_id": "w1:t2", "workspace_id": "w1", "number": 2, "label": "git" }
+      { "tab_id": "w1:t2", "workspace_id": "w1", "number": 2, "label": "git" },
+      { "tab_id": "w1:t4", "workspace_id": "w1", "number": 4, "label": "nvim" },
+      { "tab_id": "w1:t3", "workspace_id": "w1", "number": 3, "label": "server" }
     ],
     "layouts": [
       {
@@ -41,29 +41,30 @@
         "area": { "x": 0, "y": 0, "width": 200, "height": 60 },
         "focused_pane_id": "w1:p4",
         "panes": [
-          { "pane_id": "w1:p4", "focused": true, "rect": { "x": 0, "y": 0, "width": 200, "height": 20 } },
-          { "pane_id": "w1:p5", "focused": false, "rect": { "x": 0, "y": 20, "width": 200, "height": 40 } }
+          { "pane_id": "w1:p4", "focused": true, "rect": { "x": 0, "y": 0, "width": 200, "height": 60 } }
+        ],
+        "splits": []
+      },
+      {
+        "tab_id": "w1:t4",
+        "workspace_id": "w1",
+        "zoomed": false,
+        "area": { "x": 0, "y": 0, "width": 200, "height": 60 },
+        "focused_pane_id": "w1:p5",
+        "panes": [
+          { "pane_id": "w1:p5", "focused": true, "rect": { "x": 0, "y": 0, "width": 200, "height": 20 } },
+          { "pane_id": "w1:p6", "focused": false, "rect": { "x": 0, "y": 20, "width": 200, "height": 40 } }
         ],
         "splits": [
           { "id": "split_0_root", "direction": "down", "ratio": 0.33, "rect": { "x": 0, "y": 0, "width": 200, "height": 60 } }
         ]
-      },
-      {
-        "tab_id": "w9:t1",
-        "workspace_id": "w9",
-        "zoomed": false,
-        "area": { "x": 0, "y": 0, "width": 200, "height": 60 },
-        "focused_pane_id": "w9:p1",
-        "panes": [
-          { "pane_id": "w9:p1", "focused": true, "rect": { "x": 0, "y": 0, "width": 200, "height": 60 } }
-        ],
-        "splits": []
       }
     ]
   },
   "expected": [
-    { "label": "nvim", "steps": [ { "parent": 0, "dir": "down", "ratio": 0.33, "child": 1 } ] },
     { "label": "agent", "steps": [ { "parent": 0, "dir": "right", "ratio": 0.65, "child": 1 } ] },
-    { "label": "git", "steps": [] }
+    { "label": "git", "steps": [] },
+    { "label": "nvim", "steps": [ { "parent": 0, "dir": "down", "ratio": 0.33, "child": 1 } ] },
+    { "label": "server", "steps": [] }
   ]
 }

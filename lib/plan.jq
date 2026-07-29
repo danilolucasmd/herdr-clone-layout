@@ -2,7 +2,7 @@
 #
 #   jq -n --argjson snap <.result.snapshot> --arg ws <workspace_id> -f plan.jq
 #
-# Output: a JSON array of tabs in tab-number order, each:
+# Output: a JSON array of tabs in tab-bar display order, each:
 #   { "label": <string>, "steps": [ {parent,dir,ratio,child}, ... ] }
 #
 # Replay contract: a fresh tab starts as one pane = handle 0. For each step, in
@@ -74,8 +74,11 @@ def lin($n; $h; $next):
        next: $lb.next}
   end;
 
+# Snapshot array order is the tab *display* order — the order herdr paints the
+# tab bar in. `.number` is a per-tab identity that stays glued to its tab when
+# the user drags tabs around (reordering w1's tabs to t1,t2,t4,t3 leaves the
+# numbers 1,2,4,3), so sorting by it would replay the pre-reorder order.
 [$snap.tabs[] | select(.workspace_id == $ws)]
-| sort_by(.number)
 | map(
     .label as $label
     | .tab_id as $tid

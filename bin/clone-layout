@@ -124,7 +124,9 @@ do_clone() { # snap source target
   [ "${ntabs:-0}" -gt 0 ] 2>/dev/null || { log "empty plan for $source"; return 0; }
   log "clone $source -> $target ($ntabs tabs)"
 
-  root_tab=$(snapshot | jq -r --arg w "$target" '[.tabs[] | select(.workspace_id == $w)] | sort_by(.number)[0].tab_id')
+  # Display order, not .number — see lib/plan.jq. (A fresh target has exactly one
+  # tab, so this only matters if that ever stops being true.)
+  root_tab=$(snapshot | jq -r --arg w "$target" '[.tabs[] | select(.workspace_id == $w)][0].tab_id')
 
   i=0
   printf '%s' "$plan" | jq -c '.[]' | while IFS= read -r tab; do
