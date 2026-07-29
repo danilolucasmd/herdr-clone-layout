@@ -18,7 +18,8 @@ jobs:
       - name: Shellcheck
         run: |
           sudo apt-get install -y shellcheck
-          shellcheck --shell=sh bin/clone-layout tests/run.sh tests/known.sh
+          shellcheck --shell=sh bin/clone-layout bin/clone-layout-dialog \
+            tests/run.sh tests/known.sh tests/prompt.sh
 
       - name: Manifest is valid TOML
         run: python3 -c "import tomllib,sys; tomllib.load(open('herdr-plugin.toml','rb'))"
@@ -33,3 +34,7 @@ jobs:
       # The guard that decides whether a workspace is new or merely emptied.
       - name: Populated-workspace history tests
         run: ./tests/known.sh
+
+      # Which new workspaces get the directory dialog, and how it reads paths.
+      - name: Dialog routing tests
+        run: ./tests/prompt.sh

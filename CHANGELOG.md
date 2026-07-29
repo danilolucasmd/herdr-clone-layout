@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A popup when you create a plain workspace, offering either the layout as-is or
+  the same layout with every pane opened in a directory you type. It starts on
+  "clone current layout", and the directory field is pre-filled with the
+  directory of the workspace you came from, so Enter either way gives you what
+  the plugin did before. Esc leaves the new workspace bare.
+- Worktrees are unaffected: a new worktree already had its directory chosen when
+  it was created, so it still clones straight away with no dialog. Workspaces
+  built in the background (scripted `herdr workspace create`) also clone without
+  asking, since there's nobody at the keyboard to answer.
+
 ### Fixed
 
 - Clone tabs in tab-bar display order instead of `.number` order. A tab keeps

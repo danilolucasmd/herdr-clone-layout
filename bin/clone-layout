@@ -24,6 +24,9 @@ STATE="${HERDR_PLUGIN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-clo
 mkdir -p "$STATE/claimed" 2>/dev/null || true
 FOCUS_FILE="$STATE/focus-history"
 KNOWN_FILE="$STATE/populated-workspaces"
+# Set while `apply` creates its own workspace, so the event hooks that fire for
+# it don't pop a dialog asking about a layout the user already asked for.
+NOPROMPT_FILE="$STATE/suppress-prompt"
 LOG_FILE="$STATE/clone-layout.log"
 
 # On by default — a headless hook leaves no other trace of what it did.
@@ -112,6 +115,24 @@ remember_populated() { # snap
   rm -f "$tmp" "$tmp.cur" "$tmp.all"
 }
 
+# Is $ws a linked git worktree? A worktree's directory was settled when it was
+# created, so it clones straight away — only a plain new workspace is asked
+# where its panes should live.
+ws_is_worktree() { # snap ws
+  printf '%s' "$1" | jq -e --arg w "$2" \
+    'any(.workspaces[]; .workspace_id == $w and .worktree.is_linked_worktree == true)' \
+    >/dev/null 2>&1
+}
+
+# The directory a workspace is "in": its checkout when herdr tracks one (not
+# every workspace is a repo), otherwise wherever its panes are actually sitting.
+ws_dir() { # snap ws
+  printf '%s' "$1" | jq -r --arg w "$2" '
+    first(.workspaces[] | select(.workspace_id == $w) | .worktree.checkout_path // empty)
+    // first(.panes[] | select(.workspace_id == $w) | .cwd // empty)
+    // empty' 2>/dev/null
+}
+
 # Choose the workspace to clone from: the currently-focused one if it isn't the
 # new workspace, otherwise the most recent distinct entry in the focus history.
 # Only a populated workspace qualifies. Echoes the id (may be empty).
@@ -132,14 +153,15 @@ pick_source() { # snap new
 ws_tab_ids()  { snapshot | jq -c --arg w "$1" '[.tabs[]  | select(.workspace_id == $w) | .tab_id]'; }
 ws_pane_ids() { snapshot | jq -c --arg w "$1" '[.panes[] | select(.workspace_id == $w) | .pane_id]'; }
 
-create_tab() { # target label  -> new tab id
-  target=$1; label=$2
+create_tab() { # target label cwd  -> new tab id
+  target=$1; label=$2; cwd=${3:-}
   before=$(ws_tab_ids "$target")
-  if [ -n "$label" ]; then
-    "$HERDR" tab create --workspace "$target" --label "$label" >/dev/null 2>&1
-  else
-    "$HERDR" tab create --workspace "$target" >/dev/null 2>&1
-  fi
+  # No arrays in POSIX sh, so build the argv in the positional params. The
+  # originals are already saved above.
+  set -- tab create --workspace "$target"
+  [ -n "$label" ] && set -- "$@" --label "$label"
+  [ -n "$cwd" ] && set -- "$@" --cwd "$cwd"
+  "$HERDR" "$@" >/dev/null 2>&1
   snapshot | jq -r --argjson b "$before" --arg w "$target" \
     '([.tabs[] | select(.workspace_id == $w) | .tab_id] - $b)[0] // empty'
 }
@@ -148,10 +170,12 @@ tab_root_pane() { # tab -> pane id
   snapshot | jq -r --arg t "$1" '[.panes[] | select(.tab_id == $t) | .pane_id][0] // empty'
 }
 
-split_pane() { # target parent dir ratio -> new pane id
-  target=$1; parent=$2; dir=$3; ratio=$4
+split_pane() { # target parent dir ratio cwd -> new pane id
+  target=$1; parent=$2; dir=$3; ratio=$4; cwd=${5:-}
   before=$(ws_pane_ids "$target")
-  "$HERDR" pane split "$parent" --direction "$dir" --ratio "$ratio" --no-focus >/dev/null 2>&1
+  set -- pane split "$parent" --direction "$dir" --ratio "$ratio" --no-focus
+  [ -n "$cwd" ] && set -- "$@" --cwd "$cwd"
+  "$HERDR" "$@" >/dev/null 2>&1
   snapshot | jq -r --argjson b "$before" --arg w "$target" \
     '([.panes[] | select(.workspace_id == $w) | .pane_id] - $b)[0] // empty'
 }
@@ -159,13 +183,15 @@ split_pane() { # target parent dir ratio -> new pane id
 # ----------------------------------------------------------------------------
 # clone: rebuild source's tab/pane geometry inside the fresh target workspace
 # ----------------------------------------------------------------------------
-do_clone() { # snap source target
-  snap=$1; source=$2; target=$3
+# With $cwd set, every pane is spawned there instead of inheriting the target
+# workspace's own directory.
+do_clone() { # snap source target [cwd]
+  snap=$1; source=$2; target=$3; cwd=${4:-}
   plan=$(jq -n --argjson snap "$snap" --arg ws "$source" -f "$PLAN_JQ" 2>/dev/null)
   [ -n "$plan" ] || { log "no plan for $source"; return 0; }
   ntabs=$(printf '%s' "$plan" | jq 'length' 2>/dev/null)
   [ "${ntabs:-0}" -gt 0 ] 2>/dev/null || { log "empty plan for $source"; return 0; }
-  log "clone $source -> $target ($ntabs tabs)"
+  log "clone $source -> $target ($ntabs tabs)${cwd:+ in $cwd}"
 
   # Display order, not .number — see lib/plan.jq. (A fresh target has exactly one
   # tab, so this only matters if that ever stops being true.)
@@ -174,11 +200,15 @@ do_clone() { # snap source target
   i=0
   printf '%s' "$plan" | jq -c '.[]' | while IFS= read -r tab; do
     label=$(printf '%s' "$tab" | jq -r '.label // ""')
-    if [ "$i" -eq 0 ]; then
+    # Normally the first tab reuses the workspace's existing root tab. That pane
+    # is already running in the workspace's own directory and can't be respawned
+    # elsewhere, so when a directory was chosen every tab is created fresh and
+    # the root tab is closed once they exist.
+    if [ "$i" -eq 0 ] && [ -z "$cwd" ]; then
       cur_pane=$(snapshot | jq -r --arg t "$root_tab" '[.panes[] | select(.tab_id == $t) | .pane_id][0] // empty')
       [ -n "$label" ] && "$HERDR" tab rename "$root_tab" "$label" >/dev/null 2>&1
     else
-      new_tab=$(create_tab "$target" "$label")
+      new_tab=$(create_tab "$target" "$label" "$cwd")
       [ -n "$new_tab" ] || { log "tab create failed"; i=$((i + 1)); continue; }
       cur_pane=$(tab_root_pane "$new_tab")
     fi
@@ -194,7 +224,7 @@ do_clone() { # snap source target
       c=$(printf '%s'  "$step" | jq -r '.child')
       eval "pp=\$H$p"
       # shellcheck disable=SC2154  # pp is assigned by the eval on the line above
-      np=$(split_pane "$target" "$pp" "$d" "$r")
+      np=$(split_pane "$target" "$pp" "$d" "$r" "$cwd")
       if [ -n "$np" ]; then
         eval "H$c=\$np"
       else
@@ -203,10 +233,17 @@ do_clone() { # snap source target
     done
     i=$((i + 1))
   done
+  # The rebuilt tabs are all in place, so the original root tab (still sitting in
+  # the workspace's own directory) has done its job.
+  [ -n "$cwd" ] && "$HERDR" tab close "$root_tab" >/dev/null 2>&1
+
   # Show the first tab — but only if the user is already on this workspace, so a
   # workspace built in the background (CLI create) never steals their focus.
-  if [ "$(snapshot | jq -r '.focused_workspace_id // empty')" = "$target" ]; then
-    "$HERDR" tab focus "$root_tab" >/dev/null 2>&1 || true
+  first_tab=$(snapshot | jq -r --arg w "$target" \
+    '[.tabs[] | select(.workspace_id == $w)][0].tab_id // empty')
+  if [ -n "$first_tab" ] && \
+     [ "$(snapshot | jq -r '.focused_workspace_id // empty')" = "$target" ]; then
+    "$HERDR" tab focus "$first_tab" >/dev/null 2>&1 || true
   fi
 }
 
@@ -234,11 +271,43 @@ try_populate() { # new_ws
   source=$(pick_source "$snap" "$new")
   [ -n "$source" ] || { log "no source to clone for $new"; return 0; }
   claim "$new" || { log "already claimed $new"; return 0; }
+  if should_prompt "$snap" "$new"; then
+    # The dialog takes over from here: it owns the claim and does the cloning
+    # itself, so this hook returns immediately rather than blocking herdr for as
+    # long as the user takes to answer.
+    open_dialog "$snap" "$source" "$new" && return 0
+    log "could not open dialog for $new, cloning directly"
+  fi
   do_clone "$snap" "$source" "$new"
   # Record it now rather than waiting for the next event's remember_populated:
   # an overlapping hook may snapshot before these tabs are visible.
   printf '%s\n' "$new" >>"$KNOWN_FILE" 2>/dev/null || true
   unclaim "$new"
+}
+
+# Who gets the dialog: a plain new workspace the user is actually looking at.
+# A worktree already knows its directory, and a workspace built in the
+# background (scripted `herdr workspace create`) has nobody at the keyboard to
+# answer it — both clone straight away, exactly as before.
+should_prompt() { # snap ws
+  [ ! -f "$NOPROMPT_FILE" ] || return 1
+  ! ws_is_worktree "$1" "$2" || return 1
+  [ "$(printf '%s' "$1" | jq -r '.focused_workspace_id // empty' 2>/dev/null)" = "$2" ]
+}
+
+open_dialog() { # snap source target
+  dir=$(ws_dir "$1" "$2")
+  log "prompt for $3 (source $2, dir ${dir:-unknown})"
+  # No --workspace: a popup always targets the active pane, and herdr rejects
+  # the flag outright. That's fine — should_prompt only fires for the focused
+  # workspace, so the active pane is already the new one.
+  "$HERDR" plugin pane open \
+    --plugin "${HERDR_PLUGIN_ID:-herdr-clone-layout}" \
+    --entrypoint choose-layout \
+    --env "CLONE_LAYOUT_TARGET=$3" \
+    --env "CLONE_LAYOUT_FROM=$2" \
+    --env "CLONE_LAYOUT_DIR=$dir" \
+    --focus >/dev/null 2>&1
 }
 
 # ----------------------------------------------------------------------------
@@ -280,6 +349,12 @@ case "$mode" in
     source=$(printf '%s' "$snap" | jq -r '.focused_workspace_id // empty')
     [ -n "$source" ] || exit 0
     before=$(snapshot | jq -c '[.workspaces[].workspace_id]')
+    # "Duplicate this layout" is already an answer to the question the dialog
+    # asks, so silence it for the workspace this is about to create. The flag is
+    # global because the new id isn't known until after the create returns, by
+    # which time the hooks have already fired.
+    : >"$NOPROMPT_FILE" 2>/dev/null || true
+    trap 'rm -f "$NOPROMPT_FILE"' EXIT INT TERM
     "$HERDR" workspace create --focus >/dev/null 2>&1
     new=$(snapshot | jq -r --argjson b "$before" '([.workspaces[].workspace_id] - $b)[0] // empty')
     [ -n "$new" ] || exit 0

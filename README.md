@@ -20,6 +20,9 @@ workspace you were just in.
 
 - **Zero configuration.** Nothing to declare. Rearrange your panes today and
   tomorrow's worktrees follow along automatically.
+- **Worktrees just work; workspaces get a choice.** A new worktree clones
+  silently — its directory was settled when you created it. A new workspace
+  opens a popup first, so you can send all its panes somewhere else.
 - **CLI and TUI both covered.** The two creation paths emit different events;
   the plugin subscribes to all of them and dedupes, so a layout is built exactly
   once.
@@ -58,6 +61,40 @@ herdr plugin install danilolucasmd/herdr-clone-layout --ref <tag> --yes
 That's the whole setup. Arrange a workspace the way you like it, then create a
 worktree — the new one comes up already arranged.
 
+## The workspace dialog
+
+A new **worktree** clones straight away: you chose its directory when you created
+it, so there's nothing left to ask.
+
+A new **workspace** has no directory of its own, so it gets a popup first:
+
+```
+  new workspace
+
+  > clone current layout
+      the same tabs and splits as ~/Code/herdr-clone-layout
+
+    panes open in
+    ~/Code/herdr-clone-layout
+
+  ^ v switch    enter confirm    esc cancel
+```
+
+- **Enter** — clone the layout, exactly as the plugin has always done.
+- **Down**, then edit the path and **Enter** — the same tabs and splits, but
+  every pane spawned in that directory instead. `~` works, the path must exist,
+  and it's pre-filled with the directory of the workspace you came from, so
+  confirming it unchanged lands you in the same place as the first option.
+- **Esc** — leave the new workspace bare.
+
+Typing jumps straight to the path field. **Ctrl-U** clears it, **Ctrl-W** deletes
+back a path segment.
+
+The popup only appears when you're actually looking at the new workspace. A
+workspace created in the background — a scripted `herdr workspace create`, or the
+`apply` action below — clones without asking, since there's nobody there to
+answer.
+
 ## How it works
 
 herdr creates workspaces two different ways, and they emit different events:
@@ -84,20 +121,29 @@ So the hook listens for all three. On any of them it:
    qualifies.
 4. Takes an **atomic claim** on the new workspace id, so overlapping events
    can't clone it twice.
-5. Reconstructs the source's split tree from the snapshot's pane/split
+5. Decides whether to **ask**. A linked git worktree, or a workspace that isn't
+   focused, is cloned right away. Anything else opens the popup, which takes
+   over the claim and does the cloning itself once you answer — a hook that sat
+   waiting for a keypress would be blocking herdr the whole time.
+6. Reconstructs the source's split tree from the snapshot's pane/split
    rectangles, linearizes it into ordered split steps, and replays them with
    `herdr tab create` / `herdr pane split`.
 
 ```
  new workspace (CLI or TUI) ──► clone-layout event hook
         ▼
-   snapshot ─► new? ─► pick source ─► claim ─► plan.jq ─► replay
-        │                                                    │
-        └── not new / no source / already claimed ─► no-op    ▼
+   snapshot ─► new? ─► pick source ─► claim ─► ask? ─► plan.jq ─► replay
+        │                                       │                   │
+        │                            worktree, or not focused ──────┤
+        └── not new / no source / already claimed ─► no-op          ▼
                                             tab 0  → reuse + rename the root tab
                                             tab N  → herdr tab create --label
                                             step   → herdr pane split --direction --ratio
 ```
+
+With a directory chosen, tab 0 is created fresh like the rest and the
+workspace's original root tab is closed — that pane is already running in the
+workspace's own directory and can't be respawned somewhere else.
 
 The geometry analysis lives in [`lib/plan.jq`](./lib/plan.jq): herdr reports each
 pane and split as a rectangle, and the plan rebuilds the binary split tree from
@@ -163,7 +209,9 @@ tail -f ~/.local/state/herdr/plugins/herdr-clone-layout/clone-layout.log
 
 Lines look like `clone w1 -> w7 (4 tabs)`, or a reason it did nothing
 (`w7 not fresh, skip`, `w7 has held a layout before, skip`, `no source to clone
-for w7`). herdr's own plugin log is also worth a look:
+for w7`). The dialog logs its own decision too — `prompt for w7`, then
+`dialog: clone w1 -> w7 in /some/dir` or `dialog: cancelled for w7`. herdr's own
+plugin log is also worth a look:
 
 ```sh
 herdr plugin log list --plugin herdr-clone-layout
@@ -183,7 +231,13 @@ The log is trimmed to its last 500 lines on each run.
 - **Splits are rebuilt, not pixel-copied.** Ratios come back exactly as reported,
   but herdr rounds to whole cells, so a rebuilt pane can land a cell off in a
   differently-sized window.
-- **Additive.** The plugin builds panes and never tears them down.
+- **Additive.** The plugin builds panes and never tears them down. The one
+  exception is the workspace's original root tab, closed when you pick a
+  directory, because its pane can't be moved there.
+- **The dialog edits at the end of the line.** Backspace, Ctrl-W by path
+  segment, and Ctrl-U to start over; there's no cursor to move mid-path.
+- **The panes are bare shells.** Choosing a directory changes where they start,
+  not what runs in them — no commands are replayed, in either mode.
 
 ## Trust & security
 
