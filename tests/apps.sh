@@ -154,7 +154,9 @@ snapshot() { printf '%s' "$NEW"; }
 ran() { # -> what the stub was asked to run, one pane per line
   rm -f "$RAN"
   run_commands "$@"
-  cat "$RAN" 2>/dev/null | tr '\n' ';'
+  # Nothing run at all leaves no file behind, which is an answer in itself.
+  [ -f "$RAN" ] || return 0
+  tr '\n' ';' <"$RAN"
 }
 
 check 'each command lands on the pane in its position' \

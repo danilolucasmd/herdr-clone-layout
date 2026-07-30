@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1]
+
+### Fixed
+
+- Shellcheck failure in CI. `tests/apps.sh` piped `cat` into `tr`, which is
+  SC2002 — a style warning that shellcheck 0.9.0 (what the runner installs)
+  reports and newer versions no longer do by default, so it passed locally and
+  failed on push. The file is read with a redirect now.
+
 ## [0.5.0]
 
 ### Added
@@ -144,6 +153,7 @@ First public release.
 - Activity log with a 500-line cap, silenced with `HERDR_CLONE_LAYOUT_LOG=0`.
 - Offline fixture tests for the snapshot-geometry analysis (`./tests/run.sh`).
 
+[0.5.1]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.1
 [0.5.0]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.0
 [0.4.1]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.4.1
 [0.4.0]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.4.0
