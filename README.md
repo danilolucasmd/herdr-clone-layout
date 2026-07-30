@@ -21,9 +21,10 @@ workspace you were just in.
 
 - **Zero configuration.** Nothing to declare. Rearrange your panes today and
   tomorrow's worktrees follow along automatically.
-- **Worktrees just work; workspaces get a choice.** A new worktree clones
-  silently — its directory was settled when you created it. A new workspace
-  opens a popup first, so you can send all its panes somewhere else.
+- **Workspaces and worktrees both get a choice.** Whichever you create, if you're
+  looking at it you get a popup first — where the panes open, and what the clone
+  copies. One built in the background clones silently, since nobody's there to
+  answer.
 - **The apps come with it.** Each pane reopens whatever it was running — your
   editor, your dev server, your agent. Untick the second box to get bare shells
   instead.
@@ -68,12 +69,10 @@ herdr plugin install danilolucasmd/herdr-clone-layout --ref <tag> --yes
 That's the whole setup. Arrange a workspace the way you like it, then create a
 worktree — the new one comes up already arranged.
 
-## The workspace dialog
+## The dialog
 
-A new **worktree** clones straight away: you chose its directory when you created
-it, so there's nothing left to ask.
-
-A new **workspace** has no directory of its own, so it gets a popup first:
+Create a workspace (`prefix+shift+n`) or a worktree (`prefix+shift+g`) and, once
+you're looking at it, it opens with a popup:
 
 ```
   new workspace
@@ -94,6 +93,11 @@ A new **workspace** has no directory of its own, so it gets a popup first:
 Two answers and two switches. The **first two rows** decide *where the panes
 open* and are what **Enter** confirms; the **two checkboxes** decide *what a
 clone is*, and stay ticked the way you leave them.
+
+For a **worktree** it's the same popup, titled `new worktree`, with the directory
+row already on the worktree's checkout — so confirming it unchanged is exactly
+what a worktree did before it was asked at all. The one difference is
+[cancelling](#cancelling): a worktree is never thrown away.
 
 - **Enter** — clone the layout, exactly as the plugin has always done.
 - **Down**, then edit the path and **Enter** — the same tabs and splits, but
@@ -185,25 +189,34 @@ then pressing **Esc** cancels that too.
 plugin closes it for you instead of leaving an empty workspace lying around.
 herdr moves you to another workspace as it goes.
 
-It only does that to the workspace it was asked about, and only while that
+**A worktree is never closed this way.** It's a git checkout on disk with a branch
+of its own; a dismissed popup is nowhere near reason enough to remove one, so it
+stays with bare shells in it. If you do want it gone, that's herdr's job —
+`remove_worktree` (unbound by default) or `herdr worktree remove --workspace <id>`.
+
+Otherwise it only closes the workspace it was asked about, and only while that
 workspace is still the empty thing it was asked about. The popup doesn't hold the
 keyboard hostage — you can switch away, do something in the new workspace and
 come back — so before closing it checks that the workspace still has one tab and
-one pane, and that the pane isn't running anything. If either has changed it's
-kept, and the log says why:
+one pane, and that the pane isn't running anything. If any of that has changed
+it's kept, and the log says why:
 
 ```
 dialog: cancelled for w7
 dialog: w7 is running nvim ., keeping it
 ```
 
+Anything that survives being cancelled is recorded as settled, so focusing it
+later doesn't ask the same question again — it's still one tab and one pane, which
+is all "new" means to the hook.
+
 A popup that ends any other way — killed, or its herdr going away — closes
 nothing either. Only an explicit cancel does.
 
-The popup only appears when you're actually looking at the new workspace. A
-workspace created in the background — a scripted `herdr workspace create`, or the
-`apply` action below — clones without asking, since there's nobody there to
-answer.
+The popup only appears when you're actually looking at the new workspace or
+worktree. One created in the background — a scripted `herdr workspace create` or
+`herdr worktree create`, or the `apply` action below — clones without asking,
+since there's nobody there to answer.
 
 ## How it works
 
@@ -231,12 +244,16 @@ So the hook listens for all three. On any of them it:
    qualifies.
 4. Takes an **atomic claim** on the new workspace id, so overlapping events
    can't clone it twice.
-5. Decides whether to **ask**. A linked git worktree, or a workspace that isn't
-   focused, is cloned right away — or skipped entirely, if the popup's checkbox
-   was left unticked: those paths show nothing, so the remembered answer is the
-   only answer there is. Anything else opens the popup, which takes over the
-   claim and does the cloning itself once you answer — a hook that sat waiting
-   for a keypress would be blocking herdr the whole time.
+5. Decides whether to **ask**. Anything you aren't looking at is cloned right
+   away — or skipped entirely, if the popup's first checkbox was left unticked:
+   those paths show nothing, so the remembered answer is the only answer there
+   is. Whatever *is* on screen opens the popup, which takes over the claim and
+   does the cloning itself once you answer — a hook that sat waiting for a
+   keypress would be blocking herdr the whole time. A new worktree fires all
+   three events within a couple of milliseconds, so whichever handler wins the
+   claim gives the focus a moment to settle and re-reads the snapshot before
+   deciding; otherwise the popup would appear or not depending on which event
+   got there first.
 6. Reconstructs the source's split tree from the snapshot's pane/split
    rectangles, linearizes it into ordered split steps, and replays them with
    `herdr tab create` / `herdr pane split`.
@@ -249,7 +266,7 @@ So the hook listens for all three. On any of them it:
         ▼
    snapshot ─► new? ─► pick source ─► claim ─► ask? ─► plan.jq ─► replay
         │                                       │                   │
-        │                            worktree, or not focused ──────┤
+        │                                not focused ──────────────►┤
         └── not new / no source / already claimed ─► no-op          ▼
                                             tab 0  → reuse + rename the root tab
                                             tab N  → herdr tab create --label
@@ -366,8 +383,12 @@ The log is trimmed to its last 500 lines on each run.
   segment, and Ctrl-U to start over; there's no cursor to move mid-path.
 - **"No" is remembered for that workspace too.** Confirming with the first box
   unticked keeps the workspace but settles it, so switching back to it later
-  doesn't reopen the popup. Esc is the other kind of no: the workspace goes, so
-  there's nothing left to ask about.
+  doesn't reopen the popup. Esc settles it the same way whenever the workspace
+  survives — a worktree, or one that isn't empty any more.
+- **A worktree's popup only appears if herdr put you in it.** The in-app
+  `prefix+shift+g` focuses the new worktree, so you get asked. A scripted
+  `herdr worktree create` doesn't focus it, so it clones silently on the
+  remembered answers, exactly as it did before.
 - **A reopened command runs where the pane opens, not where it ran.** Panes start
   in the new workspace's directory (or the one you typed), so a command that was
   running in a subdirectory — `pnpm run dev` in `apps/web` — comes back at the

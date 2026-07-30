@@ -38,9 +38,13 @@ cat >"$TMP/herdr" <<'STUB'
 #!/usr/bin/env sh
 counts='"tab_count":1,"pane_count":1'
 [ "${WS_STATE:-idle}" = dirty ] && counts='"tab_count":2,"pane_count":2'
+# $WS_KIND makes w7 a linked worktree instead of a plain workspace.
+wt=null
+[ "${WS_KIND:-workspace}" = worktree ] &&
+  wt='{"checkout_path":"/repo/.wt/x","is_linked_worktree":true}'
 case "$1 $2" in
   "api snapshot")
-    printf '{"result":{"snapshot":{"focused_workspace_id":"w7","workspaces":[{"workspace_id":"w7",%s,"worktree":null}],"tabs":[{"workspace_id":"w7","tab_id":"w7:t1","label":""}],"panes":[{"pane_id":"w7:p1","workspace_id":"w7","tab_id":"w7:t1","cwd":"/tmp"}],"layouts":[]}}}\n' "$counts"
+    printf '{"result":{"snapshot":{"focused_workspace_id":"w7","workspaces":[{"workspace_id":"w7",%s,"worktree":%s}],"tabs":[{"workspace_id":"w7","tab_id":"w7:t1","label":""}],"panes":[{"pane_id":"w7:p1","workspace_id":"w7","tab_id":"w7:t1","cwd":"/tmp"}],"layouts":[]}}}\n' "$counts" "$wt"
     ;;
   "pane process-info")
     if [ "${WS_STATE:-idle}" = busy ]; then
@@ -84,7 +88,8 @@ answer() { # keys [stored_clone_box] [stored_apps_box]
   rm -rf "$state"
   mkdir -p "$state"
   WS_STATE=${WS_STATE:-idle}
-  export WS_STATE
+  WS_KIND=${WS_KIND:-workspace}
+  export WS_STATE WS_KIND
   [ -n "${2:-}" ] && printf '%s\n' "$2" >"$state/clone-enabled"
   [ -n "${3:-}" ] && printf '%s\n' "$3" >"$state/reopen-apps"
   printf '%s' "$1" >"$TMP/keys"
@@ -160,12 +165,29 @@ check 'esc after unticking leaves both boxes as they were' \
 
 # But only an untouched workspace: the popup doesn't hold the keyboard hostage,
 # and whatever someone put in there while it was up is theirs, not ours to close.
+# Anything kept is recorded as settled, so Esc isn't asked again about it.
 check 'a workspace that grew a tab meanwhile is kept' \
-  "cancelled for w7|(unset)|(unset)|(none)|(none)" \
+  "cancelled for w7|(unset)|(unset)|w7|(none)" \
   "$(WS_STATE=dirty answer "$ESC")"
 check 'so is one whose pane is running something' \
-  "cancelled for w7|(unset)|(unset)|(none)|(none)" \
+  "cancelled for w7|(unset)|(unset)|w7|(none)" \
   "$(WS_STATE=busy answer "$ESC")"
+
+# A worktree is never closed by cancelling, empty or not: it is a checkout on
+# disk with a branch of its own, which a dismissed popup is no reason to remove.
+check 'esc leaves a worktree alone' \
+  "cancelled for w7|(unset)|(unset)|w7|(none)" \
+  "$(WS_KIND=worktree answer "$ESC")"
+check 'and ctrl-d leaves it alone too' \
+  "cancelled for w7|(unset)|(unset)|w7|(none)" \
+  "$(WS_KIND=worktree answer "$(printf '\004')")"
+# Confirming still works the same for one — the boxes are the point of asking.
+check 'a worktree still clones on enter' \
+  "clone w1 -> w7 as-is|1|1|w7|(none)" \
+  "$(WS_KIND=worktree answer "$ENTER")"
+check 'and still honours an unticked box' \
+  "clone off, leaving w7 as it is|0|1|w7|(none)" \
+  "$(WS_KIND=worktree answer "$DOWN$DOWN$SPACE$UP$UP$ENTER")"
 
 # A popup that never got an answer at all decides nothing either way — the
 # workspace stays, because nobody said they didn't want it.

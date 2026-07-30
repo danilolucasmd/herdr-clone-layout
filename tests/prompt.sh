@@ -83,12 +83,18 @@ check 'otherwise fall back to a pane cwd'     /home/someone/notes "$(ws_dir "$SN
 check 'an unknown workspace has no directory' ''                  "$(ws_dir "$SNAP" wZ)"
 
 # --- who actually gets asked -------------------------------------------------
-# The dialog is for a plain workspace the user is looking at. A worktree already
-# had its directory chosen; a workspace built in the background has nobody there
-# to answer; and `apply` is itself an answer, so it sets the suppress flag.
+# The dialog is for whatever the user is looking at, worktree or not: a worktree's
+# directory was settled when it was created, but the two boxes were not. What
+# isn't asked is anything built in the background, with nobody there to answer —
+# and `apply`, which is itself an answer, so it sets the suppress flag.
 check 'a focused plain workspace is asked'      yes "$(yesno should_prompt "$SNAP" w1)"
-check 'a worktree is never asked'               no  "$(yesno should_prompt "$SNAP" w2)"
 check 'an unfocused workspace is not asked'     no  "$(yesno should_prompt "$SNAP" w3)"
+check 'an unfocused worktree is not either'     no  "$(yesno should_prompt "$SNAP" w2)"
+
+# The same question, for the same reason, once the worktree is the one on screen.
+SNAP_WT=$(printf '%s' "$SNAP" | jq -c '.focused_workspace_id = "w2"')
+check 'a focused worktree is asked too'         yes "$(yesno should_prompt "$SNAP_WT" w2)"
+check 'and the focus is what decides it'        no  "$(yesno should_prompt "$SNAP_WT" w1)"
 : >"$NOPROMPT_FILE"
 check 'apply suppresses the question'           no  "$(yesno should_prompt "$SNAP" w1)"
 rm -f "$NOPROMPT_FILE"
@@ -149,6 +155,8 @@ HOOK_WS='{
      "worktree": {"checkout_path": "/repo/.wt/a", "is_linked_worktree": true}},
     {"workspace_id": "w8", "tab_count": 1, "pane_count": 1,
      "worktree": {"checkout_path": "/repo/.wt/b", "is_linked_worktree": true}},
+    {"workspace_id": "w6", "tab_count": 1, "pane_count": 1,
+     "worktree": {"checkout_path": "/repo/.wt/c", "is_linked_worktree": true}},
     {"workspace_id": "w7", "tab_count": 1, "pane_count": 1, "worktree": null}
   ],
   "panes": []
@@ -165,16 +173,22 @@ populate() { # new_ws -> "cloned|asked"
   printf '%s|%s' "$cloned" "$asked"
 }
 
-# A worktree never sees the popup, so the box is the only say the user gets.
+# Built in the background, with nobody looking, there is no popup to answer — so
+# the box is the only say the user gets. This is also the path that settles the
+# focus before deciding, since a worktree's three events all race each other.
+FOCUSED=w1
 remember "$CLONE_BOX" 1
-check 'a worktree clones while the box is ticked'   'w1 -> w9|' "$(populate w9)"
+check 'a background worktree clones while ticked'   'w1 -> w9|' "$(populate w9)"
 remember "$CLONE_BOX" 0
 check 'and is left alone once it is unticked'       '|'         "$(populate w8)"
 
-# The popup is the one thing an unticked box does not suppress — it is where the
-# box lives, so hiding it would leave no way to tick it back on.
+# On screen it is asked instead, worktree or not — and an unticked box does not
+# suppress that, since the popup is where the box lives and hiding it would leave
+# no way to tick it back on. (The box is still unticked from just above.)
+FOCUSED=w6
+check 'a worktree you are looking at is asked'      '|w1 -> w6' "$(populate w6)"
 FOCUSED=w7
-check 'a plain new workspace is still asked'        '|w1 -> w7' "$(populate w7)"
+check 'so is a plain new workspace'                 '|w1 -> w7' "$(populate w7)"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

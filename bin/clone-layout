@@ -46,11 +46,22 @@ trim_log() {
   [ -f "$LOG_FILE" ] || return 0
   lines=$(wc -l <"$LOG_FILE" 2>/dev/null) || return 0
   [ "${lines:-0}" -gt 500 ] 2>/dev/null || return 0
-  tail -n 500 "$LOG_FILE" >"$LOG_FILE.tmp" 2>/dev/null && mv "$LOG_FILE.tmp" "$LOG_FILE"
+  # $$ keeps concurrent hooks off each other's temp file. A new worktree fires
+  # three events within milliseconds, and on a shared temp path their writes
+  # interleave — the winner of the race then moves a truncated log into place.
+  log_tmp="$LOG_FILE.$$"
+  if tail -n 500 "$LOG_FILE" >"$log_tmp" 2>/dev/null; then
+    mv "$log_tmp" "$LOG_FILE" 2>/dev/null || rm -f "$log_tmp" 2>/dev/null
+  fi
 }
 
 # Full snapshot's .snapshot object (tabs/panes/workspaces/layouts/focus).
 snapshot() { "$HERDR" api snapshot 2>/dev/null | jq -c '.result.snapshot'; }
+
+# Long enough for herdr to finish reacting to something, short enough not to be
+# felt. A fraction of a second is all it takes; POSIX only promises whole seconds
+# from sleep, so fall back to one if this sleep won't take a fraction.
+settle() { sleep 0.2 2>/dev/null || sleep 1; }
 
 # ----------------------------------------------------------------------------
 # the remembered answers — the dialog's checkboxes
@@ -153,9 +164,13 @@ remember_populated() { # snap
   rm -f "$tmp" "$tmp.cur" "$tmp.all"
 }
 
-# Is $ws a linked git worktree? A worktree's directory was settled when it was
-# created, so it clones straight away — only a plain new workspace is asked
-# where its panes should live.
+ws_is_focused() { # snap ws
+  [ "$(printf '%s' "$1" | jq -r '.focused_workspace_id // empty' 2>/dev/null)" = "$2" ]
+}
+
+# Is $ws a linked git worktree? Its directory was settled when it was created, so
+# the popup's directory row opens on the checkout — and cancelling never throws
+# one away, since a worktree is a checkout on disk and not just a workspace.
 ws_is_worktree() { # snap ws
   printf '%s' "$1" | jq -e --arg w "$2" \
     'any(.workspaces[]; .workspace_id == $w and .worktree.is_linked_worktree == true)' \
@@ -432,6 +447,16 @@ try_populate() { # new_ws
   source=$(pick_source "$snap" "$new")
   [ -n "$source" ] || { log "no source to clone for $new"; return 0; }
   claim "$new" || { log "already claimed $new"; return 0; }
+  # A worktree arrives with three events at once — workspace.created,
+  # worktree.created and workspace.focused, inside a couple of milliseconds — so
+  # whichever handler won the claim above may have read its snapshot before the
+  # focus landed on the new workspace. It holds the claim, so nothing is racing
+  # it any more: give the focus a moment and look again. Without this the popup
+  # would appear or not depending on which of the three events got there first.
+  if ws_is_worktree "$snap" "$new" && ! ws_is_focused "$snap" "$new"; then
+    settle
+    snap=$(snapshot)
+  fi
   if should_prompt "$snap" "$new"; then
     # The dialog takes over from here: it owns the claim and does the cloning
     # itself, so this hook returns immediately rather than blocking herdr for as
@@ -454,28 +479,33 @@ try_populate() { # new_ws
   unclaim "$new"
 }
 
-# Who gets the dialog: a plain new workspace the user is actually looking at.
-# A worktree already knows its directory, and a workspace built in the
+# Who gets the dialog: a new workspace — worktree or not — that the user is
+# actually looking at. A worktree's directory is settled, but the two boxes are
+# not, and the popup is the only place they can be changed. One built in the
 # background (scripted `herdr workspace create`) has nobody at the keyboard to
-# answer it — both clone straight away, exactly as before.
+# answer, so it clones straight away, exactly as before.
 should_prompt() { # snap ws
   [ ! -f "$NOPROMPT_FILE" ] || return 1
-  ! ws_is_worktree "$1" "$2" || return 1
-  [ "$(printf '%s' "$1" | jq -r '.focused_workspace_id // empty' 2>/dev/null)" = "$2" ]
+  ws_is_focused "$1" "$2"
 }
 
 open_dialog() { # snap source target
   dir=$(ws_dir "$1" "$2")
-  log "prompt for $3 (source $2, dir ${dir:-unknown})"
-  # No --workspace: a popup always targets the active pane, and herdr rejects
-  # the flag outright. That's fine — should_prompt only fires for the focused
-  # workspace, so the active pane is already the new one.
+  # What the popup calls the thing it is asking about, and what cancelling it is
+  # allowed to do: a worktree is never thrown away, a plain workspace is.
+  kind=workspace
+  ws_is_worktree "$1" "$3" && kind=worktree
+  log "prompt for $3 ($kind, source $2, dir ${dir:-unknown})"
+  # `plugin pane open` does take --workspace and --target-pane, but neither is
+  # needed: a popup with no target goes to the active pane, and should_prompt
+  # only fires for the focused workspace, so the active pane is already there.
   "$HERDR" plugin pane open \
     --plugin "${HERDR_PLUGIN_ID:-herdr-clone-layout}" \
     --entrypoint choose-layout \
     --env "CLONE_LAYOUT_TARGET=$3" \
     --env "CLONE_LAYOUT_FROM=$2" \
     --env "CLONE_LAYOUT_DIR=$dir" \
+    --env "CLONE_LAYOUT_KIND=$kind" \
     --focus >/dev/null 2>&1
 }
 

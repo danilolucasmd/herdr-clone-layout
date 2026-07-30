@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **New worktrees get the popup too.** Creating one with `prefix+shift+g` now
+  asks the same question a new workspace does, titled `new worktree`, with the
+  directory row already on the worktree's checkout — so confirming it unchanged
+  does exactly what a worktree did when it was never asked. The point is the two
+  checkboxes: a worktree's directory was settled when you created it, but what
+  the clone copies wasn't, and the popup is the only place to change it. A
+  worktree created in the background still clones silently on the remembered
+  answers, since herdr doesn't focus one and there's nobody to answer.
+- Cancelling never removes a worktree. It's a git checkout on disk with a branch
+  of its own, so unlike an empty new workspace it stays, with bare shells in it.
+  Anything that survives a cancel is now recorded as settled, so focusing it
+  later doesn't ask the same question again.
+
 - A popup when you create a plain workspace, offering either the layout as-is or
   the same layout with every pane opened in a directory you type. It starts on
   "clone current layout", and the directory field is pre-filled with the
@@ -72,6 +85,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the `workspace.created` / `workspace.focused` hooks build for the same new
   workspace.
 - A failed or empty snapshot is no longer read as "every workspace was closed".
+- Stop the activity log from being truncated by its own trimming. Three hooks
+  fire at once for a new worktree and all trimmed through one shared temp path,
+  so their writes interleaved and the winner of the race moved a truncated log
+  into place — with `mv: cannot stat` from the losers in herdr's plugin log.
+- Decide whether to ask about a new worktree only after its focus has settled.
+  Its three events arrive within a couple of milliseconds of each other, so
+  whichever won the claim could read a snapshot from before the focus landed and
+  clone silently instead of asking.
 - Drop claims left behind by a workspace that no longer exists. A popup whose
   workspace is closed from somewhere else is orphaned rather than signalled, so
   its trap never runs and its claim stayed forever; since herdr recycles short

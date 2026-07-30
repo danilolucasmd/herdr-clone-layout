@@ -1,9 +1,12 @@
 #!/usr/bin/env sh
-# herdr-clone-layout — the popup a plain new workspace gets, asking whether to
-# clone the previous workspace's layout as-is, to clone it with every pane opened
-# in a directory you choose, or — with the first checkbox unticked — not at all.
-# A second checkbox decides whether each pane reopens the command it was running.
-# Both boxes are remembered for the next new workspace.
+# herdr-clone-layout — the popup a new workspace or worktree gets, asking whether
+# to clone the previous workspace's layout as-is, to clone it with every pane
+# opened in a directory you choose, or — with the first checkbox unticked — not at
+# all. A second checkbox decides whether each pane reopens the command it was
+# running. Both boxes are remembered for the next one.
+#
+# Cancelling closes a plain new workspace, since nothing has been put in it yet.
+# A worktree is left alone: it is a checkout on disk with a branch of its own.
 #
 # herdr runs this as a popup plugin pane (see [[panes]] in herdr-plugin.toml),
 # so stdin is a tty and the process owning the popup is this script: the popup
@@ -31,6 +34,10 @@ unset CLONE_LAYOUT_SOURCE
 TARGET=${CLONE_LAYOUT_TARGET:-}
 FROM=${CLONE_LAYOUT_FROM:-}
 DIR=${CLONE_LAYOUT_DIR:-}
+# "workspace" or "worktree" — what to call the thing being asked about. Only the
+# wording depends on it; what may be closed on the way out is decided from the
+# snapshot, so a stale or missing value can't cost anybody a checkout.
+KIND=${CLONE_LAYOUT_KIND:-workspace}
 
 # ----------------------------------------------------------------------------
 # terminal handling
@@ -62,6 +69,13 @@ cleanup() {
 # ours to close, however they got there.
 discardable() { # ws
   snap=$(snapshot)
+  # A worktree is a git checkout on disk with a branch of its own. Cancelling a
+  # popup is nowhere near reason enough to throw that away, so it stays and only
+  # the popup closes.
+  if ws_is_worktree "$snap" "$1"; then
+    log "dialog: $1 is a worktree, keeping it"
+    return 1
+  fi
   if ! ws_is_fresh "$snap" "$1"; then
     log "dialog: $1 is not empty any more, keeping it"
     return 1
@@ -88,6 +102,12 @@ cancel() {
   if [ -n "$TARGET" ] && discardable "$TARGET"; then
     log "dialog: closing $TARGET"
     "$HERDR" workspace close "$TARGET" >/dev/null 2>&1 || log "dialog: could not close $TARGET"
+  else
+    # It is staying — a worktree, or something that isn't empty any more. Record
+    # it as settled: it is still one tab and one pane, which is all "fresh"
+    # means, so without this the popup would open again the next time it is
+    # focused and keep asking a question already answered with Esc.
+    printf '%s\n' "$TARGET" >>"$KNOWN_FILE" 2>/dev/null || true
   fi
   exit 0
 }
@@ -185,7 +205,7 @@ row_label() { # row_index label
 
 render() {
   printf '\033[H\033[2J\033[?25l'
-  printf '  %snew workspace%s\r\n\r\n' "$B" "$R"
+  printf '  %snew %s%s\r\n\r\n' "$B" "$KIND" "$R"
 
   row_label 0 'clone current layout'
   if [ "$enabled" -eq 1 ]; then
@@ -194,7 +214,7 @@ render() {
     # This line describes what row 0 would do, so it is the right place to say
     # that the box below has taken it off the table — and what Enter does now
     # instead, which the key hints have no room left for.
-    printf '      %snothing is cloned. enter leaves this workspace empty%s\r\n\r\n' "$D" "$R"
+    printf '      %snothing is cloned. enter leaves this %s empty%s\r\n\r\n' "$D" "$KIND" "$R"
   fi
 
   row_label 1 'panes open in'
