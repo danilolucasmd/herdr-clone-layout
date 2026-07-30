@@ -94,6 +94,29 @@ check 'apply suppresses the question'           no  "$(yesno should_prompt "$SNA
 rm -f "$NOPROMPT_FILE"
 check 'and it is asked again once apply is done' yes "$(yesno should_prompt "$SNAP" w1)"
 
+# --- the remembered checkbox -------------------------------------------------
+# Only a stored "0" turns cloning off, so a fresh install — and a state dir the
+# plugin cannot write to — keeps cloning exactly as it did before the box existed.
+check 'cloning is on before anything is stored' yes "$(yesno clone_enabled)"
+set_clone_enabled 0
+check 'unticking the box is remembered'         no  "$(yesno clone_enabled)"
+set_clone_enabled 1
+check 'ticking it back on is too'               yes "$(yesno clone_enabled)"
+printf 'garbage\n' >"$ENABLED_FILE"
+check 'an unreadable answer counts as on'       yes "$(yesno clone_enabled)"
+rm -f "$ENABLED_FILE"
+check 'and so does no answer at all'            yes "$(yesno clone_enabled)"
+
+# The box is drawn from the same flag the dialog acts on, so an [x] on screen
+# can't disagree with what Enter is about to do. (shellcheck can't see into the
+# sourced dialog, so `enabled` looks written-but-never-read from here.)
+# shellcheck disable=SC2034
+enabled=1
+check 'a ticked box is drawn ticked'   '[x]' "$(checkbox)"
+# shellcheck disable=SC2034
+enabled=0
+check 'an unticked box is drawn empty' '[ ]' "$(checkbox)"
+
 # --- turning what was typed back into a path ---------------------------------
 check 'a bare tilde is the home directory'  "$HOME"          "$(expand_path '~')"
 check 'a tilde path expands'                "$HOME/dotfiles" "$(expand_path '~/dotfiles')"
@@ -108,6 +131,46 @@ check 'a path outside home is left alone'   /var/tmp         "$(abbrev_path '/va
 # never matches — the dialog would ignore the key that confirms it.
 check 'every key constant is one byte'      '1 1 1 1 1 1 1 1 1' \
   "${#CR} ${#LF} ${#TAB} ${#ESC} ${#BS} ${#DEL} ${#NAK} ${#ETB} ${#EOT}"
+
+# --- what the hook does with the remembered answer ---------------------------
+# From here on the three things try_populate reaches out to are stand-ins, so
+# the decision itself can be tested with no herdr server and no popup. Keep this
+# section last: the real snapshot/do_clone/open_dialog are gone afterwards.
+FOCUSED=w9
+HOOK_WS='{
+  "workspaces": [
+    {"workspace_id": "w1", "tab_count": 3, "pane_count": 4,
+     "worktree": {"checkout_path": "/repo", "is_linked_worktree": false}},
+    {"workspace_id": "w9", "tab_count": 1, "pane_count": 1,
+     "worktree": {"checkout_path": "/repo/.wt/a", "is_linked_worktree": true}},
+    {"workspace_id": "w8", "tab_count": 1, "pane_count": 1,
+     "worktree": {"checkout_path": "/repo/.wt/b", "is_linked_worktree": true}},
+    {"workspace_id": "w7", "tab_count": 1, "pane_count": 1, "worktree": null}
+  ],
+  "panes": []
+}'
+snapshot() { printf '%s' "$HOOK_WS" | jq -c --arg f "$FOCUSED" '.focused_workspace_id = $f'; }
+do_clone()    { cloned="$2 -> $3"; }
+open_dialog() { asked="$2 -> $3"; }
+record_focus w1   # the workspace to clone from, as the real hook would record it
+
+populate() { # new_ws -> "cloned|asked"
+  cloned=''; asked=''
+  try_populate "$1"
+  unclaim "$1"
+  printf '%s|%s' "$cloned" "$asked"
+}
+
+# A worktree never sees the popup, so the box is the only say the user gets.
+set_clone_enabled 1
+check 'a worktree clones while the box is ticked'   'w1 -> w9|' "$(populate w9)"
+set_clone_enabled 0
+check 'and is left alone once it is unticked'       '|'         "$(populate w8)"
+
+# The popup is the one thing an unticked box does not suppress — it is where the
+# box lives, so hiding it would leave no way to tick it back on.
+FOCUSED=w7
+check 'a plain new workspace is still asked'        '|w1 -> w7' "$(populate w7)"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

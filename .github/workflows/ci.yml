@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo apt-get install -y shellcheck
           shellcheck --shell=sh bin/clone-layout bin/clone-layout-dialog \
-            tests/run.sh tests/known.sh tests/prompt.sh
+            tests/run.sh tests/known.sh tests/prompt.sh tests/keys.sh
 
       - name: Manifest is valid TOML
         run: python3 -c "import tomllib,sys; tomllib.load(open('herdr-plugin.toml','rb'))"
@@ -35,6 +35,12 @@ jobs:
       - name: Populated-workspace history tests
         run: ./tests/known.sh
 
-      # Which new workspaces get the directory dialog, and how it reads paths.
+      # Which new workspaces get the dialog, how it reads paths, and what the
+      # remembered checkbox does to the hook.
       - name: Dialog routing tests
         run: ./tests/prompt.sh
+
+      # The popup itself, driven by its keys. No tty needed: the keys arrive on
+      # stdin and a stub herdr stands in for the session.
+      - name: Dialog key tests
+        run: ./tests/keys.sh

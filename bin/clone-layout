@@ -27,6 +27,9 @@ KNOWN_FILE="$STATE/populated-workspaces"
 # Set while `apply` creates its own workspace, so the event hooks that fire for
 # it don't pop a dialog asking about a layout the user already asked for.
 NOPROMPT_FILE="$STATE/suppress-prompt"
+# The dialog's checkbox: should a new workspace inherit a layout at all? Written
+# when the dialog is confirmed, read the next time one opens.
+ENABLED_FILE="$STATE/clone-enabled"
 LOG_FILE="$STATE/clone-layout.log"
 
 # On by default — a headless hook leaves no other trace of what it did.
@@ -46,6 +49,30 @@ trim_log() {
 
 # Full snapshot's .snapshot object (tabs/panes/workspaces/layouts/focus).
 snapshot() { "$HERDR" api snapshot 2>/dev/null | jq -c '.result.snapshot'; }
+
+# ----------------------------------------------------------------------------
+# the remembered answer to "clone a layout into new workspaces?"
+#
+# The dialog's checkbox, kept here so it is still ticked the way you left it the
+# next time a workspace is created. Anything but a stored "0" counts as on, so a
+# fresh install — and a state dir that fails to write — behaves as it always has.
+#
+# It gates the paths that clone WITHOUT asking (a worktree, a workspace built in
+# the background): there is no popup on those, so the remembered answer is the
+# only answer available. The popup itself is shown regardless, since unticking
+# the box is what it is for.
+# ----------------------------------------------------------------------------
+clone_enabled() { [ "$(cat "$ENABLED_FILE" 2>/dev/null)" != "0" ]; }
+
+set_clone_enabled() { # 1|0
+  # Write-then-rename so a reader never sees a half-written file, and never fail
+  # the caller over it — a lost preference is not worth abandoning the clone.
+  enabled_tmp="$ENABLED_FILE.$$"
+  if printf '%s\n' "$1" >"$enabled_tmp" 2>/dev/null; then
+    mv "$enabled_tmp" "$ENABLED_FILE" 2>/dev/null || rm -f "$enabled_tmp" 2>/dev/null
+  fi
+  return 0
+}
 
 # ----------------------------------------------------------------------------
 # focus history: one workspace id per line, most-recent last, capped at 20.
@@ -278,6 +305,14 @@ try_populate() { # new_ws
     open_dialog "$snap" "$source" "$new" && return 0
     log "could not open dialog for $new, cloning directly"
   fi
+  # Nobody is being asked on this path, so honour the box the dialog last left
+  # unticked. The workspace isn't recorded as done: leave it eligible, so
+  # ticking the box back on still catches it while it is untouched.
+  if ! clone_enabled; then
+    log "clone layout is off, leaving $new alone"
+    unclaim "$new"
+    return 0
+  fi
   do_clone "$snap" "$source" "$new"
   # Record it now rather than waiting for the next event's remember_populated:
   # an overlapping hook may snapshot before these tabs are visible.
@@ -344,7 +379,8 @@ case "$mode" in
     esac
     ;;
   apply)
-    # Duplicate the current workspace into a new one.
+    # Duplicate the current workspace into a new one. Invoking this IS the ask,
+    # so the dialog's checkbox doesn't gate it and isn't changed by it.
     snap=$(snapshot)
     source=$(printf '%s' "$snap" | jq -r '.focused_workspace_id // empty')
     [ -n "$source" ] || exit 0

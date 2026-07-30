@@ -23,6 +23,9 @@ workspace you were just in.
 - **Worktrees just work; workspaces get a choice.** A new worktree clones
   silently — its directory was settled when you created it. A new workspace
   opens a popup first, so you can send all its panes somewhere else.
+- **A checkbox turns it off, and it stays off.** Untick *clone layouts into new
+  workspaces* in the popup and nothing is cloned — into that workspace, or into
+  any new workspace or worktree after it, until you tick it again.
 - **CLI and TUI both covered.** The two creation paths emit different events;
   the plugin subscribes to all of them and dedupes, so a layout is built exactly
   once.
@@ -77,18 +80,62 @@ A new **workspace** has no directory of its own, so it gets a popup first:
     panes open in
     ~/Code/herdr-clone-layout
 
-  ^ v switch    enter confirm    esc cancel
+    [x] clone layouts into new workspaces
+      remembered until you change it here again
+
+  ^ v switch    space toggle    enter confirm    esc cancel
 ```
+
+Two answers and a switch. The **first two rows** decide *where the panes open*;
+the **checkbox** on the last row decides *whether anything is cloned at all*.
 
 - **Enter** — clone the layout, exactly as the plugin has always done.
 - **Down**, then edit the path and **Enter** — the same tabs and splits, but
   every pane spawned in that directory instead. `~` works, the path must exist,
   and it's pre-filled with the directory of the workspace you came from, so
   confirming it unchanged lands you in the same place as the first option.
+- **Space** — tick or untick the box. See below.
 - **Esc** — leave the new workspace bare.
 
 Typing jumps straight to the path field. **Ctrl-U** clears it, **Ctrl-W** deletes
-back a path segment.
+back a path segment. Space is the checkbox's key everywhere *except* in the path
+field, where it types a space like any other character.
+
+### Turning it off
+
+Go **down** to the checkbox, **Space** to untick it, then back **up** to either
+directory answer and **Enter**:
+
+```
+  new workspace
+
+  > clone current layout
+      nothing is cloned while the box below is unticked
+
+    panes open in
+    ~/Code/herdr-clone-layout
+
+    [ ] clone layouts into new workspaces
+      remembered. enter now leaves this workspace empty
+
+  ^ v switch    space toggle    enter confirm    esc cancel
+```
+
+The box wins over whichever row you confirm from: **Enter** leaves the new
+workspace exactly as herdr opened it — and so does every workspace *and worktree*
+created afterwards, silently, without a popup for the ones that would have got
+one. It's remembered in the plugin's state dir (`clone-enabled`), so it survives
+restarts. (Confirming on the checkbox row itself works too, and clones as-is when
+the box is ticked.)
+
+The popup is the one thing an unticked box doesn't suppress: it's where the box
+lives, so a plain new workspace still opens it, unticked, and **Space** then
+**Enter** puts everything back. `prefix+shift+d`
+([manual duplicate](#manual-duplicate)) also keeps working while the box is
+unticked — invoking it *is* the answer to the question the box asks.
+
+Only **Enter** writes the answer down. Toggling the box and then pressing **Esc**
+cancels the whole popup, box included.
 
 The popup only appears when you're actually looking at the new workspace. A
 workspace created in the background — a scripted `herdr workspace create`, or the
@@ -122,9 +169,11 @@ So the hook listens for all three. On any of them it:
 4. Takes an **atomic claim** on the new workspace id, so overlapping events
    can't clone it twice.
 5. Decides whether to **ask**. A linked git worktree, or a workspace that isn't
-   focused, is cloned right away. Anything else opens the popup, which takes
-   over the claim and does the cloning itself once you answer — a hook that sat
-   waiting for a keypress would be blocking herdr the whole time.
+   focused, is cloned right away — or skipped entirely, if the popup's checkbox
+   was left unticked: those paths show nothing, so the remembered answer is the
+   only answer there is. Anything else opens the popup, which takes over the
+   claim and does the cloning itself once you answer — a hook that sat waiting
+   for a keypress would be blocking herdr the whole time.
 6. Reconstructs the source's split tree from the snapshot's pane/split
    rectangles, linearizes it into ordered split steps, and replays them with
    `herdr tab create` / `herdr pane split`.
@@ -195,7 +244,7 @@ see [herdr-plugin-workspace-manager](https://github.com/razajamil/herdr-plugin-w
 | Var | Default | Purpose |
 | --- | --- | --- |
 | `HERDR_CLONE_LAYOUT_LOG` | `1` | Set to `0` to disable the activity log. |
-| `HERDR_PLUGIN_STATE_DIR` | set by herdr | Where the focus history, populated-workspace history, claims, and log live. Falls back to `$XDG_STATE_HOME/herdr-clone-layout`. |
+| `HERDR_PLUGIN_STATE_DIR` | set by herdr | Where the focus history, populated-workspace history, claims, the `clone-enabled` checkbox, and the log live. Falls back to `$XDG_STATE_HOME/herdr-clone-layout`. |
 | `HERDR_PLUGIN_ROOT` | set by herdr | Plugin checkout root; falls back to the script's own directory. |
 | `HERDR_BIN_PATH` | `herdr` | The herdr binary to drive. |
 
@@ -209,9 +258,10 @@ tail -f ~/.local/state/herdr/plugins/herdr-clone-layout/clone-layout.log
 
 Lines look like `clone w1 -> w7 (4 tabs)`, or a reason it did nothing
 (`w7 not fresh, skip`, `w7 has held a layout before, skip`, `no source to clone
-for w7`). The dialog logs its own decision too — `prompt for w7`, then
-`dialog: clone w1 -> w7 in /some/dir` or `dialog: cancelled for w7`. herdr's own
-plugin log is also worth a look:
+for w7`, `clone layout is off, leaving w7 alone`). The dialog logs its own
+decision too — `prompt for w7`, then `dialog: clone w1 -> w7 in /some/dir`,
+`dialog: clone off, leaving w7 as it is`, or `dialog: cancelled for w7`. herdr's
+own plugin log is also worth a look:
 
 ```sh
 herdr plugin log list --plugin herdr-clone-layout
@@ -236,6 +286,10 @@ The log is trimmed to its last 500 lines on each run.
   directory, because its pane can't be moved there.
 - **The dialog edits at the end of the line.** Backspace, Ctrl-W by path
   segment, and Ctrl-U to start over; there's no cursor to move mid-path.
+- **"No" is remembered for that workspace too.** Confirming with the box
+  unticked also settles the workspace you were asked about, so switching back to
+  it later doesn't reopen the popup. Esc is different: it decides nothing, and
+  focusing an untouched new workspace again asks once more.
 - **The panes are bare shells.** Choosing a directory changes where they start,
   not what runs in them — no commands are replayed, in either mode.
 
@@ -243,21 +297,25 @@ The log is trimmed to its last 500 lines on each run.
 
 A herdr plugin is ordinary code that runs on your machine with your environment
 and can drive the full herdr CLI. This one runs no commands of yours — it only
-calls `herdr api snapshot`, `herdr tab create/rename/focus`, `herdr pane split`,
-and `herdr workspace create/focus`. It's ~200 lines of POSIX sh plus a jq
-program; read them.
+calls `herdr api snapshot`, `herdr tab create/rename/focus/close`, `herdr pane
+split`, `herdr workspace create/focus`, and `herdr plugin pane open` for the
+popup. It's ~700 lines of POSIX sh plus a jq program; read them.
 
 ## Development
 
 ```sh
 ./tests/run.sh          # every fixture
 ./tests/run.sh grid     # fixtures matching "grid"
+./tests/known.sh        # the "new workspace or merely emptied?" guard
+./tests/prompt.sh       # who gets asked, how paths are read, the remembered box
+./tests/keys.sh         # the popup driven by its own keys
 ```
 
-The tests cover `lib/plan.jq` — the snapshot-geometry analysis — against
-fixtures in [`tests/fixtures/`](./tests/fixtures), each carrying a snapshot and
-the plan it should produce. They're pure jq: no herdr server, no terminal,
-nothing to clean up, so they run in CI.
+`run.sh` covers `lib/plan.jq` — the snapshot-geometry analysis — against fixtures
+in [`tests/fixtures/`](./tests/fixtures), each carrying a snapshot and the plan it
+should produce. `keys.sh` runs the real popup with its keys on stdin and a stub
+herdr in place of a session. All four need nothing but `jq`: no herdr server, no
+terminal, nothing to clean up, so they run in CI.
 
 Adding a case is one JSON file with `name`, `ws`, `snapshot`, and `expected`.
 To capture a real layout to build one from:

@@ -17,6 +17,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it was created, so it still clones straight away with no dialog. Workspaces
   built in the background (scripted `herdr workspace create`) also clone without
   asking, since there's nobody at the keyboard to answer.
+- A **checkbox** on that popup's last row — `[x] clone layouts into new
+  workspaces` — turning the plugin off. The two rows above it still decide where
+  the panes open; the box decides whether anything is cloned at all. Go down to
+  it, Space to untick, back up to either directory answer, and Enter now leaves
+  the new workspace exactly as herdr opened it. The answer is remembered in the
+  state dir (`clone-enabled`), so it outlives the popup and a restart: while it
+  is unticked nothing is cloned into any new workspace or worktree, including the
+  paths that never showed a popup. The popup still opens for a plain new
+  workspace, since that is where the box is; Space and Enter put everything back.
+  `prefix+shift+d` is unaffected either way — invoking it is itself the answer.
+  Only Enter writes the answer down, so toggling the box and pressing Esc cancels
+  that too.
+- `tests/keys.sh`, driving the popup through its own key handling — the keys
+  arrive on stdin and a stub herdr stands in for the session, so it needs no
+  terminal and runs in CI alongside the rest.
 
 ### Fixed
 
