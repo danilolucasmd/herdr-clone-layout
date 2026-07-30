@@ -22,15 +22,16 @@ on = "worktree.created"
 command = ["sh", "bin/clone-layout", "event"]
 
 # The popup a plain new workspace gets: clone the layout as-is, clone it with
-# every pane opened in a directory you choose, or — with the checkbox on the last
-# row unticked — don't clone at all, now or for the next new workspace. Worktrees
+# every pane opened in a directory you choose, or — with the first of the two
+# checkboxes unticked — don't clone at all, now or for the next new workspace.
+# The second decides whether the panes reopen what they were running. Worktrees
 # skip this: their directory was already settled when the worktree was created.
 [[panes]]
 id = "choose-layout"
 title = "new workspace"
 placement = "popup"
 width = 66
-height = 15
+height = 16
 command = ["sh", "bin/clone-layout-dialog"]
 
 # Manual: duplicate the current workspace's geometry into a brand-new workspace.

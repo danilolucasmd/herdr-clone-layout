@@ -1,8 +1,9 @@
 #!/usr/bin/env sh
 # herdr-clone-layout — the popup a plain new workspace gets, asking whether to
 # clone the previous workspace's layout as-is, to clone it with every pane opened
-# in a directory you choose, or — with the checkbox unticked — not at all. The
-# state of that checkbox is remembered for the next new workspace.
+# in a directory you choose, or — with the first checkbox unticked — not at all.
+# A second checkbox decides whether each pane reopens the command it was running.
+# Both boxes are remembered for the next new workspace.
 #
 # herdr runs this as a popup plugin pane (see [[panes]] in herdr-plugin.toml),
 # so stdin is a tty and the process owning the popup is this script: the popup
@@ -106,28 +107,37 @@ C=$(printf '\033[36m')     # cyan
 R=$(printf '\033[0m')      # reset
 REV=$(printf '\033[7m')    # reverse (the input cursor)
 
-row=0        # 0 = clone as-is, 1 = directory input, 2 = the checkbox
-BOX_ROW=2    # the last row, so up/down clamp against it
+row=0        # 0 = clone as-is, 1 = directory input, 2 and 3 = the checkboxes
+CLONE_ROW=2
+APPS_ROW=3
+LAST_ROW=3   # up/down clamp against it
+
+# The checkboxes are rows of their own, below the two directory answers rather
+# than mixed in with them: the answers above decide *where* the panes open, the
+# boxes below decide *what* a clone is. Unticking the first one means nothing is
+# cloned at all, so Enter from any row leaves the new workspace as herdr opened
+# it; the second one decides whether each pane reopens the command it had. Both
+# are remembered, so the boxes open the way they were left.
 input=$(abbrev_path "$DIR")
 err=''
 
-# The checkbox is its own row, below the two directory answers rather than mixed
-# in with them: it decides *whether* a layout is cloned at all, while the rows
-# above decide *where* the panes open once one is. Unticked, Enter from any row
-# leaves the new workspace as herdr opened it. The answer is remembered, so the
-# box opens the way it was left.
 enabled=1
 clone_enabled || enabled=0
-checkbox() { if [ "$enabled" -eq 1 ]; then printf '[x]'; else printf '[ ]'; fi; }
+apps=1
+apps_enabled || apps=0
+
+checkbox() { # 1|0
+  if [ "$1" -eq 1 ]; then printf '[x]'; else printf '[ ]'; fi
+}
 
 # One selectable row: the cursor marks the row you are on, and its label is bold
-# there, dim elsewhere. While the box is unticked the two answers above it are
-# dim even when selected — they stay reachable, since confirming still happens on
-# them, but nothing they describe is going to happen.
+# there, dim elsewhere. While the first box is unticked everything above it is
+# dim even when selected — those rows stay reachable, since confirming still
+# happens on them, but nothing they describe is going to happen.
 row_label() { # row_index label
   if [ "$row" -ne "$1" ]; then
     printf '    %s%s%s\r\n' "$D" "$2" "$R"
-  elif [ "$enabled" -eq 0 ] && [ "$1" -ne "$BOX_ROW" ]; then
+  elif [ "$enabled" -eq 0 ] && [ "$1" -lt "$CLONE_ROW" ]; then
     printf '  %s>%s %s%s%s\r\n' "$C" "$R" "$D" "$2" "$R"
   else
     printf '  %s>%s %s%s%s\r\n' "$C" "$R" "$B" "$2" "$R"
@@ -143,8 +153,9 @@ render() {
     printf '      %sthe same tabs and splits as %s%s\r\n\r\n' "$D" "$(abbrev_path "$DIR")" "$R"
   else
     # This line describes what row 0 would do, so it is the right place to say
-    # that the box below has taken it off the table.
-    printf '      %snothing is cloned while the box below is unticked%s\r\n\r\n' "$D" "$R"
+    # that the box below has taken it off the table — and what Enter does now
+    # instead, which the key hints have no room left for.
+    printf '      %snothing is cloned. enter leaves this workspace empty%s\r\n\r\n' "$D" "$R"
   fi
 
   row_label 1 'panes open in'
@@ -154,20 +165,18 @@ render() {
     printf '    %s%s%s\r\n\r\n' "$D" "$input" "$R"
   fi
 
-  row_label "$BOX_ROW" "$(checkbox) clone layouts into new workspaces"
-  # What Enter does now belongs here rather than in the key hints below: the
-  # popup is a fixed 66 columns, and a fourth item does not fit on that line.
-  if [ "$enabled" -eq 1 ]; then
-    printf '      %sremembered until you change it here again%s\r\n\r\n' "$D" "$R"
-  else
-    printf '      %sremembered. enter now leaves this workspace empty%s\r\n\r\n' "$D" "$R"
-  fi
+  # A heading for the pair, so the boxes read as settings rather than as two more
+  # answers to the question above them.
+  printf '    %soptions%s\r\n' "$D" "$R"
+  row_label "$CLONE_ROW" "$(checkbox "$enabled") clone layouts into new workspaces"
+  row_label "$APPS_ROW"  "$(checkbox "$apps") reopen the apps each pane was running"
+  printf '\r\n'
 
   if [ -n "$err" ]; then
     printf '  %s%s%s\r\n' "$(printf '\033[31m')" "$err" "$R"
-  elif [ "$row" -eq 1 ]; then
-    # Space is the box's key, so it is only advertised where it does that — on
-    # the directory row it types a space like any other character.
+  elif [ "$row" -lt "$CLONE_ROW" ]; then
+    # Space only belongs to the row it is standing on, and with two boxes there
+    # is no sensible box for it to toggle from the rows above them.
     printf '  %s^ v switch    enter confirm    esc cancel%s\r\n' "$D" "$R"
   else
     printf '  %s^ v switch    space toggle    enter confirm    esc cancel%s\r\n' "$D" "$R"
@@ -178,10 +187,12 @@ render() {
 # the clone, once an answer is in
 # ----------------------------------------------------------------------------
 finish() { # [cwd]
-  # Confirming with the box ticked is the "yes" that gets remembered — written
-  # here rather than on the keypress, so an Enter that only produced "no such
-  # directory" hasn't quietly decided anything.
-  set_clone_enabled 1
+  # Confirming is what gets both boxes remembered — written here rather than on
+  # the keypress, so an Enter that only produced "no such directory" hasn't
+  # quietly decided anything. do_clone reads the apps box back out of the state
+  # dir, so it has to be written before the clone starts.
+  remember "$CLONE_BOX" 1
+  remember "$APPS_BOX" "$apps"
   restore
   printf '\033[H\033[2J\r\n  building layout...\r\n'
   do_clone "$(snapshot)" "$FROM" "$TARGET" "${1:-}"
@@ -240,10 +251,11 @@ while :; do
   case "$key" in
     "$CR" | "$LF")
       if [ "$enabled" -eq 0 ]; then
-        # A deliberate no. Remember it for the next workspace, and record this
-        # one as done so simply switching back to it doesn't ask all over again
-        # — it is still 1 tab and 1 pane, which is all "fresh" means.
-        set_clone_enabled 0
+        # A deliberate no. Remember both boxes for the next workspace, and record
+        # this one as done so simply switching back to it doesn't ask all over
+        # again — it is still 1 tab and 1 pane, which is all "fresh" means.
+        remember "$CLONE_BOX" 0
+        remember "$APPS_BOX" "$apps"
         log "dialog: clone off, leaving $TARGET as it is"
         printf '%s\n' "$TARGET" >>"$KNOWN_FILE" 2>/dev/null || true
         restore
@@ -269,7 +281,7 @@ while :; do
       peek_seq
       case "$seq" in
         '[A') [ "$row" -gt 0 ] && row=$((row - 1)) ;;            # up
-        '[B') [ "$row" -lt "$BOX_ROW" ] && row=$((row + 1)) ;;    # down
+        '[B') [ "$row" -lt "$LAST_ROW" ] && row=$((row + 1)) ;;   # down
         '')                                  # bare Esc — cancel
           log "dialog: cancelled for $TARGET"
           restore
@@ -296,20 +308,21 @@ while :; do
       fi
       ;;
     ' ')
-      # Space ticks the box from anywhere except the directory row, where it is
-      # an ordinary character — directory names do contain spaces, and silently
-      # appending one to a path you can't see being edited would be worse than
-      # asking you to be on the box.
+      # Space ticks the box you are standing on. On the directory row it is an
+      # ordinary character instead — directory names do contain spaces. On the
+      # top row it does nothing: with two boxes there is no one box for it to
+      # mean, and silently appending a space to a path you can't see being
+      # edited would be worse than asking you to be on the box you want.
       if [ "$row" -eq 1 ]; then
         input="$input$key"
-      elif [ "$enabled" -eq 1 ]; then
-        enabled=0
-      else
-        enabled=1
+      elif [ "$row" -eq "$CLONE_ROW" ]; then
+        if [ "$enabled" -eq 1 ]; then enabled=0; else enabled=1; fi
+      elif [ "$row" -eq "$APPS_ROW" ]; then
+        if [ "$apps" -eq 1 ]; then apps=0; else apps=1; fi
       fi
       ;;
     "$TAB")                                  # tab cycles the rows
-      row=$(( (row + 1) % (BOX_ROW + 1) ))
+      row=$(( (row + 1) % (LAST_ROW + 1) ))
       ;;
     *)
       # Printable input goes to the directory, and typing jumps you there so

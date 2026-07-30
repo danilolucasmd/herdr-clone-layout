@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo apt-get install -y shellcheck
           shellcheck --shell=sh bin/clone-layout bin/clone-layout-dialog \
-            tests/run.sh tests/known.sh tests/prompt.sh tests/keys.sh
+            tests/run.sh tests/known.sh tests/prompt.sh tests/keys.sh tests/apps.sh
 
       - name: Manifest is valid TOML
         run: python3 -c "import tomllib,sys; tomllib.load(open('herdr-plugin.toml','rb'))"
@@ -44,3 +44,8 @@ jobs:
       # stdin and a stub herdr stands in for the session.
       - name: Dialog key tests
         run: ./tests/keys.sh
+
+      # Reading a command out of a pane's process tree and typing it into the
+      # pane that was cloned from it.
+      - name: Reopen-apps tests
+        run: ./tests/apps.sh

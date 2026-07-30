@@ -94,28 +94,32 @@ check 'apply suppresses the question'           no  "$(yesno should_prompt "$SNA
 rm -f "$NOPROMPT_FILE"
 check 'and it is asked again once apply is done' yes "$(yesno should_prompt "$SNAP" w1)"
 
-# --- the remembered checkbox -------------------------------------------------
-# Only a stored "0" turns cloning off, so a fresh install — and a state dir the
-# plugin cannot write to — keeps cloning exactly as it did before the box existed.
-check 'cloning is on before anything is stored' yes "$(yesno clone_enabled)"
-set_clone_enabled 0
-check 'unticking the box is remembered'         no  "$(yesno clone_enabled)"
-set_clone_enabled 1
-check 'ticking it back on is too'               yes "$(yesno clone_enabled)"
-printf 'garbage\n' >"$ENABLED_FILE"
-check 'an unreadable answer counts as on'       yes "$(yesno clone_enabled)"
-rm -f "$ENABLED_FILE"
-check 'and so does no answer at all'            yes "$(yesno clone_enabled)"
+# --- the remembered checkboxes -----------------------------------------------
+# Only a stored "0" unticks a box, so a fresh install starts with both ticked and
+# a state dir the plugin cannot write to behaves the same rather than quietly
+# turning things off.
+check 'both boxes start ticked'                 'yes yes' \
+  "$(yesno clone_enabled) $(yesno apps_enabled)"
+remember "$CLONE_BOX" 0
+check 'unticking a box is remembered'           'no yes' \
+  "$(yesno clone_enabled) $(yesno apps_enabled)"
+remember "$APPS_BOX" 0
+remember "$CLONE_BOX" 1
+check 'each box is remembered on its own'       'yes no' \
+  "$(yesno clone_enabled) $(yesno apps_enabled)"
+remember "$APPS_BOX" 1
+check 'ticking one back on is too'              'yes yes' \
+  "$(yesno clone_enabled) $(yesno apps_enabled)"
+printf 'garbage\n' >"$STATE/$CLONE_BOX"
+check 'an unreadable answer counts as ticked'   yes "$(yesno clone_enabled)"
+rm -f "$STATE/$CLONE_BOX" "$STATE/$APPS_BOX"
+check 'and so does no answer at all'            'yes yes' \
+  "$(yesno clone_enabled) $(yesno apps_enabled)"
 
-# The box is drawn from the same flag the dialog acts on, so an [x] on screen
-# can't disagree with what Enter is about to do. (shellcheck can't see into the
-# sourced dialog, so `enabled` looks written-but-never-read from here.)
-# shellcheck disable=SC2034
-enabled=1
-check 'a ticked box is drawn ticked'   '[x]' "$(checkbox)"
-# shellcheck disable=SC2034
-enabled=0
-check 'an unticked box is drawn empty' '[ ]' "$(checkbox)"
+# A box is drawn from the same flag the dialog acts on, so an [x] on screen can't
+# disagree with what Enter is about to do.
+check 'a ticked box is drawn ticked'   '[x]' "$(checkbox 1)"
+check 'an unticked box is drawn empty' '[ ]' "$(checkbox 0)"
 
 # --- turning what was typed back into a path ---------------------------------
 check 'a bare tilde is the home directory'  "$HOME"          "$(expand_path '~')"
@@ -162,9 +166,9 @@ populate() { # new_ws -> "cloned|asked"
 }
 
 # A worktree never sees the popup, so the box is the only say the user gets.
-set_clone_enabled 1
+remember "$CLONE_BOX" 1
 check 'a worktree clones while the box is ticked'   'w1 -> w9|' "$(populate w9)"
-set_clone_enabled 0
+remember "$CLONE_BOX" 0
 check 'and is left alone once it is unticked'       '|'         "$(populate w8)"
 
 # The popup is the one thing an unticked box does not suppress — it is where the

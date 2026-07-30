@@ -27,9 +27,11 @@ KNOWN_FILE="$STATE/populated-workspaces"
 # Set while `apply` creates its own workspace, so the event hooks that fire for
 # it don't pop a dialog asking about a layout the user already asked for.
 NOPROMPT_FILE="$STATE/suppress-prompt"
-# The dialog's checkbox: should a new workspace inherit a layout at all? Written
-# when the dialog is confirmed, read the next time one opens.
-ENABLED_FILE="$STATE/clone-enabled"
+# The dialog's checkboxes, one file each: should a new workspace inherit a layout
+# at all, and should its panes reopen what they were running? Written when the
+# dialog is confirmed, read the next time one opens.
+CLONE_BOX='clone-enabled'
+APPS_BOX='reopen-apps'
 LOG_FILE="$STATE/clone-layout.log"
 
 # On by default — a headless hook leaves no other trace of what it did.
@@ -51,28 +53,37 @@ trim_log() {
 snapshot() { "$HERDR" api snapshot 2>/dev/null | jq -c '.result.snapshot'; }
 
 # ----------------------------------------------------------------------------
-# the remembered answer to "clone a layout into new workspaces?"
+# the remembered answers — the dialog's checkboxes
 #
-# The dialog's checkbox, kept here so it is still ticked the way you left it the
-# next time a workspace is created. Anything but a stored "0" counts as on, so a
-# fresh install — and a state dir that fails to write — behaves as it always has.
+# Each box is one file holding "1" or "0", kept here so the popup opens with the
+# boxes ticked the way you left them. Anything but a stored "0" counts as on, so
+# a fresh install starts with both ticked, and a state dir that cannot be written
+# behaves the same rather than quietly turning features off.
 #
-# It gates the paths that clone WITHOUT asking (a worktree, a workspace built in
-# the background): there is no popup on those, so the remembered answer is the
-# only answer available. The popup itself is shown regardless, since unticking
-# the box is what it is for.
+# clone-enabled gates the paths that clone WITHOUT asking (a worktree, a
+# workspace built in the background): there is no popup on those, so the
+# remembered answer is the only answer available. The popup itself is shown
+# regardless, since unticking the box is what it is for.
+#
+# reopen-apps decides what a clone copies: geometry alone, or geometry plus
+# whatever each pane was running.
 # ----------------------------------------------------------------------------
-clone_enabled() { [ "$(cat "$ENABLED_FILE" 2>/dev/null)" != "0" ]; }
+remembered() { # box -> 0 if it is ticked
+  [ "$(cat "$STATE/$1" 2>/dev/null)" != "0" ]
+}
 
-set_clone_enabled() { # 1|0
+remember() { # box 1|0
   # Write-then-rename so a reader never sees a half-written file, and never fail
   # the caller over it — a lost preference is not worth abandoning the clone.
-  enabled_tmp="$ENABLED_FILE.$$"
-  if printf '%s\n' "$1" >"$enabled_tmp" 2>/dev/null; then
-    mv "$enabled_tmp" "$ENABLED_FILE" 2>/dev/null || rm -f "$enabled_tmp" 2>/dev/null
+  box_tmp="$STATE/$1.$$"
+  if printf '%s\n' "$2" >"$box_tmp" 2>/dev/null; then
+    mv "$box_tmp" "$STATE/$1" 2>/dev/null || rm -f "$box_tmp" 2>/dev/null
   fi
   return 0
 }
+
+clone_enabled() { remembered "$CLONE_BOX"; }   # clone a layout at all?
+apps_enabled()  { remembered "$APPS_BOX";  }   # re-run what the panes had open?
 
 # ----------------------------------------------------------------------------
 # focus history: one workspace id per line, most-recent last, capped at 20.
@@ -197,6 +208,77 @@ tab_root_pane() { # tab -> pane id
   snapshot | jq -r --arg t "$1" '[.panes[] | select(.tab_id == $t) | .pane_id][0] // empty'
 }
 
+# ----------------------------------------------------------------------------
+# reopening what the panes were running
+#
+# herdr cannot start a pane on a command — `pane split` and `tab create` only
+# take a cwd — so a pane is created as a shell and the command is typed into it
+# afterwards with `pane run`. The shell buffers input from the moment it exists,
+# so there is nothing to wait for.
+#
+# Source and rebuilt tab have the same geometry, so listing both tabs' panes in
+# the same order pairs them off without having to track handles: position i in
+# one is position i in the other.
+# ----------------------------------------------------------------------------
+tab_pane_ids() { # snap tab_id -> one pane id per line, top-to-bottom then left-to-right
+  printf '%s' "$1" | jq -r --arg t "$2" '
+    [.layouts[] | select(.tab_id == $t) | .panes[]]
+    | sort_by(.rect.y, .rect.x) | .[].pane_id' 2>/dev/null
+}
+
+# What a pane is running, or empty if it is sitting at its shell prompt. The
+# foreground process group leader is the command that was actually started; the
+# rest of the group is its children, and a pane whose foreground process is the
+# shell itself has nothing to reopen. Always prints exactly one line, so a herdr
+# that fails to answer costs one pane its command instead of shifting every
+# command in the tab onto the wrong pane.
+pane_command() { # pane_id
+  cmd=$("$HERDR" pane process-info --pane "$1" 2>/dev/null | jq -r '
+    .result.process_info as $p
+    | [$p.foreground_processes[]? | select(.pid != $p.shell_pid)] as $fg
+    | if ($fg | length) == 0 then ""
+      else ((first($fg[] | select(.pid == $p.foreground_process_group_id)) // $fg[0]).cmdline // "")
+      end
+    # One command per line downstream, and a control character has no business
+    # being typed into a shell.
+    | gsub("[[:cntrl:]]"; " ") | sub("^ +"; "") | sub(" +$"; "")' 2>/dev/null) || cmd=''
+  printf '%s\n' "$cmd"
+}
+
+tab_commands() { # snap tab_id -> JSON array of commands, one per pane, in pane order
+  ids=$(tab_pane_ids "$1" "$2")
+  [ -n "$ids" ] || { printf '[]'; return 0; }
+  printf '%s\n' "$ids" \
+  | while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      pane_command "$p"
+    done \
+  | jq -R -s -c 'rtrimstr("\n") | split("\n")' 2>/dev/null
+}
+
+run_commands() { # tab_id json_commands
+  ncmd=$(printf '%s' "$2" | jq 'length' 2>/dev/null) || return 0
+  [ "${ncmd:-0}" -gt 0 ] 2>/dev/null || return 0
+  panes=$(tab_pane_ids "$(snapshot)" "$1")
+  npane=$(printf '%s\n' "$panes" | grep -c '[^[:space:]]')
+  # A tab that came out with a different number of panes — a split that failed,
+  # say — has no reliable pairing left, and typing a command into the wrong pane
+  # is worse than typing none.
+  if [ "$npane" -ne "$ncmd" ]; then
+    log "not reopening in $1: $npane panes for $ncmd commands"
+    return 0
+  fi
+  i=0
+  printf '%s\n' "$panes" | while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    cmd=$(printf '%s' "$2" | jq -r --argjson i "$i" '.[$i] // ""' 2>/dev/null)
+    i=$((i + 1))
+    [ -n "$cmd" ] || continue
+    log "reopen in $p: $cmd"
+    "$HERDR" pane run "$p" "$cmd" >/dev/null 2>&1 || log "reopen failed in $p"
+  done
+}
+
 split_pane() { # target parent dir ratio cwd -> new pane id
   target=$1; parent=$2; dir=$3; ratio=$4; cwd=${5:-}
   before=$(ws_pane_ids "$target")
@@ -218,7 +300,21 @@ do_clone() { # snap source target [cwd]
   [ -n "$plan" ] || { log "no plan for $source"; return 0; }
   ntabs=$(printf '%s' "$plan" | jq 'length' 2>/dev/null)
   [ "${ntabs:-0}" -gt 0 ] 2>/dev/null || { log "empty plan for $source"; return 0; }
-  log "clone $source -> $target ($ntabs tabs)${cwd:+ in $cwd}"
+
+  # lib/plan.jq is geometry only, by contract, and knows nothing about which tab
+  # a plan entry came from. Pair them up here instead: same filter, same order.
+  reopen=0
+  if apps_enabled; then
+    # Never overwrite the plan with a failed enrichment: a clone without its
+    # commands is a small loss, a clone without its tabs is the whole feature.
+    enriched=$(jq -n --argjson plan "$plan" --argjson snap "$snap" --arg w "$source" '
+      [$snap.tabs[] | select(.workspace_id == $w) | .tab_id] as $ids
+      | [range($plan | length) | $plan[.] + {source_tab: $ids[.]}]' 2>/dev/null)
+    if [ -n "$enriched" ]; then plan=$enriched; reopen=1; fi
+  fi
+  reopening=''
+  [ "$reopen" -eq 1 ] && reopening=', reopening apps'
+  log "clone $source -> $target ($ntabs tabs)${cwd:+ in $cwd}$reopening"
 
   # Display order, not .number — see lib/plan.jq. (A fresh target has exactly one
   # tab, so this only matters if that ever stops being true.)
@@ -227,16 +323,26 @@ do_clone() { # snap source target [cwd]
   i=0
   printf '%s' "$plan" | jq -c '.[]' | while IFS= read -r tab; do
     label=$(printf '%s' "$tab" | jq -r '.label // ""')
+    # Ask the source tab what it is running before building anything, so the
+    # commands come from the workspace being cloned rather than from the panes
+    # this loop is about to create.
+    cmds='[]'
+    if [ "$reopen" -eq 1 ]; then
+      src_tab=$(printf '%s' "$tab" | jq -r '.source_tab // ""')
+      [ -n "$src_tab" ] && cmds=$(tab_commands "$snap" "$src_tab")
+    fi
     # Normally the first tab reuses the workspace's existing root tab. That pane
     # is already running in the workspace's own directory and can't be respawned
     # elsewhere, so when a directory was chosen every tab is created fresh and
     # the root tab is closed once they exist.
     if [ "$i" -eq 0 ] && [ -z "$cwd" ]; then
+      cur_tab=$root_tab
       cur_pane=$(snapshot | jq -r --arg t "$root_tab" '[.panes[] | select(.tab_id == $t) | .pane_id][0] // empty')
       [ -n "$label" ] && "$HERDR" tab rename "$root_tab" "$label" >/dev/null 2>&1
     else
       new_tab=$(create_tab "$target" "$label" "$cwd")
       [ -n "$new_tab" ] || { log "tab create failed"; i=$((i + 1)); continue; }
+      cur_tab=$new_tab
       cur_pane=$(tab_root_pane "$new_tab")
     fi
     [ -n "$cur_pane" ] || { log "no root pane for tab $i"; i=$((i + 1)); continue; }
@@ -258,6 +364,10 @@ do_clone() { # snap source target [cwd]
         log "split failed parent=$pp $d $r"
       fi
     done
+
+    # The tab is fully split now, so its panes are in their final positions and
+    # can be paired with the ones they were cloned from.
+    [ "$cmds" = '[]' ] || run_commands "$cur_tab" "$cmds"
     i=$((i + 1))
   done
   # The rebuilt tabs are all in place, so the original root tab (still sitting in

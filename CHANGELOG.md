@@ -29,9 +29,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `prefix+shift+d` is unaffected either way — invoking it is itself the answer.
   Only Enter writes the answer down, so toggling the box and pressing Esc cancels
   that too.
+- A **second checkbox** below it — `[x] reopen the apps each pane was running` —
+  and with it the end of geometry-only cloning. Ticked, every pane in the clone
+  reopens the command the pane it was cloned from was running: herdr cannot start
+  a pane *on* a command, so the pane is created as a shell and the command is
+  typed into it with `herdr pane run`. The command is the pane's real one, read
+  from `herdr pane process-info` — the foreground process group leader, not the
+  children it forked — and a pane at its shell prompt stays a shell. Source and
+  clone have the same geometry, so their panes pair off by position; a tab that
+  comes out with a different number of panes reopens nothing rather than type a
+  command into the wrong pane. Remembered like the first box, and it applies to
+  worktrees and `prefix+shift+d` too.
+- **This box starts ticked**, so out of the box a clone now re-runs your
+  commands: a second dev server will fight the first for its port, and an agent
+  pane starts a fresh agent. Untick it for the old bare-shell behaviour.
 - `tests/keys.sh`, driving the popup through its own key handling — the keys
   arrive on stdin and a stub herdr stands in for the session, so it needs no
   terminal and runs in CI alongside the rest.
+- `tests/apps.sh`, covering the command reading and the pane pairing against a
+  stub herdr that answers `pane process-info` from fixtures and records every
+  `pane run`.
 
 ### Fixed
 
