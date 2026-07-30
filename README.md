@@ -101,7 +101,9 @@ clone is*, and stay ticked the way you leave them.
   and it's pre-filled with the directory of the workspace you came from, so
   confirming it unchanged lands you in the same place as the first option.
 - **Space**, on either box — tick or untick it. See below.
-- **Esc** — leave the new workspace bare.
+- **Esc** — you didn't want this one after all: the new workspace is **closed**,
+  not left behind empty. Ctrl-D does the same. See
+  [Cancelling](#cancelling).
 
 Typing jumps straight to the path field. **Ctrl-U** clears it, **Ctrl-W** deletes
 back a path segment. Space belongs to the row it's standing on: it toggles a box,
@@ -176,6 +178,27 @@ make one.)
 
 Only **Enter** writes the answers down, both boxes at once. Toggling a box and
 then pressing **Esc** cancels that too.
+
+### Cancelling
+
+**Esc** (or **Ctrl-D**) means you didn't want the new workspace after all, so the
+plugin closes it for you instead of leaving an empty workspace lying around.
+herdr moves you to another workspace as it goes.
+
+It only does that to the workspace it was asked about, and only while that
+workspace is still the empty thing it was asked about. The popup doesn't hold the
+keyboard hostage — you can switch away, do something in the new workspace and
+come back — so before closing it checks that the workspace still has one tab and
+one pane, and that the pane isn't running anything. If either has changed it's
+kept, and the log says why:
+
+```
+dialog: cancelled for w7
+dialog: w7 is running nvim ., keeping it
+```
+
+A popup that ends any other way — killed, or its herdr going away — closes
+nothing either. Only an explicit cancel does.
 
 The popup only appears when you're actually looking at the new workspace. A
 workspace created in the background — a scripted `herdr workspace create`, or the
@@ -315,7 +338,8 @@ logged as it is typed — `reopen in w9:p3: pnpm run dev` — or `not reopening 
 w9:t2: 2 panes for 3 commands` when a tab came out the wrong shape. The dialog
 logs its own decision too — `prompt for w7`, then `dialog: clone w1 -> w7 in
 /some/dir`, `dialog: clone off, leaving w7 as it is`, or `dialog: cancelled for
-w7`. herdr's own plugin log is also worth a look:
+w7` followed by either `dialog: closing w7` or the reason it was kept. herdr's
+own plugin log is also worth a look:
 
 ```sh
 herdr plugin log list --plugin herdr-clone-layout
@@ -340,10 +364,10 @@ The log is trimmed to its last 500 lines on each run.
   directory, because its pane can't be moved there.
 - **The dialog edits at the end of the line.** Backspace, Ctrl-W by path
   segment, and Ctrl-U to start over; there's no cursor to move mid-path.
-- **"No" is remembered for that workspace too.** Confirming with the box
-  unticked also settles the workspace you were asked about, so switching back to
-  it later doesn't reopen the popup. Esc is different: it decides nothing, and
-  focusing an untouched new workspace again asks once more.
+- **"No" is remembered for that workspace too.** Confirming with the first box
+  unticked keeps the workspace but settles it, so switching back to it later
+  doesn't reopen the popup. Esc is the other kind of no: the workspace goes, so
+  there's nothing left to ask about.
 - **A reopened command runs where the pane opens, not where it ran.** Panes start
   in the new workspace's directory (or the one you typed), so a command that was
   running in a subdirectory — `pnpm run dev` in `apps/web` — comes back at the
@@ -361,7 +385,9 @@ The log is trimmed to its last 500 lines on each run.
 A herdr plugin is ordinary code that runs on your machine with your environment
 and can drive the full herdr CLI. This one calls `herdr api snapshot`, `herdr tab
 create/rename/focus/close`, `herdr pane split/process-info/run`, `herdr workspace
-create/focus`, and `herdr plugin pane open` for the popup. It's ~800 lines of
+create/focus/close`, and `herdr plugin pane open` for the popup. The one thing it
+closes is a workspace you just cancelled out of, and only while it is still
+empty. It's ~800 lines of
 POSIX sh plus a jq program; read them.
 
 **With the apps box ticked it does run commands of yours** — the ones your own

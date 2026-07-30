@@ -53,6 +53,45 @@ cleanup() {
   unclaim "$TARGET"
 }
 
+# ----------------------------------------------------------------------------
+# cancelling
+# ----------------------------------------------------------------------------
+# Is the new workspace still the empty thing this popup was opened about? The
+# popup doesn't hold the keyboard hostage — you can switch away, do something in
+# the workspace and come back — and a workspace with someone's work in it is not
+# ours to close, however they got there.
+discardable() { # ws
+  snap=$(snapshot)
+  if ! ws_is_fresh "$snap" "$1"; then
+    log "dialog: $1 is not empty any more, keeping it"
+    return 1
+  fi
+  pane=$(printf '%s' "$snap" | jq -r --arg w "$1" \
+    '[.panes[] | select(.workspace_id == $w) | .pane_id][0] // empty' 2>/dev/null)
+  [ -n "$pane" ] || return 1
+  busy=$(pane_command "$pane")
+  if [ -n "$busy" ]; then
+    log "dialog: $1 is running $busy, keeping it"
+    return 1
+  fi
+  return 0
+}
+
+# Esc (and ctrl-d) mean "I didn't want this one after all", so the workspace
+# herdr just made goes with it rather than being left behind empty.
+cancel() {
+  log "dialog: cancelled for $TARGET"
+  restore
+  # Let go of the claim first: this popup is attached to a pane in the workspace
+  # it is about to close, so it may not outlive the request.
+  unclaim "$TARGET"
+  if [ -n "$TARGET" ] && discardable "$TARGET"; then
+    log "dialog: closing $TARGET"
+    "$HERDR" workspace close "$TARGET" >/dev/null 2>&1 || log "dialog: could not close $TARGET"
+  fi
+  exit 0
+}
+
 raw_mode() { stty raw -echo min 1 time 0 2>/dev/null; }
 
 # Reads one raw byte into $key (empty at EOF).
@@ -282,19 +321,11 @@ while :; do
       case "$seq" in
         '[A') [ "$row" -gt 0 ] && row=$((row - 1)) ;;            # up
         '[B') [ "$row" -lt "$LAST_ROW" ] && row=$((row + 1)) ;;   # down
-        '')                                  # bare Esc — cancel
-          log "dialog: cancelled for $TARGET"
-          restore
-          exit 0
-          ;;
+        '') cancel ;;                        # bare Esc
         *) : ;;                              # some other sequence, ignore
       esac
       ;;
-    "$EOT")                                  # ctrl-d, same as cancelling
-      log "dialog: cancelled for $TARGET"
-      restore
-      exit 0
-      ;;
+    "$EOT") cancel ;;                        # ctrl-d, same as cancelling
     "$BS" | "$DEL")
       [ "$row" -eq 1 ] && input=${input%?}
       ;;

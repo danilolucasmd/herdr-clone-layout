@@ -387,11 +387,34 @@ do_clone() { # snap source target [cwd]
 # A claim guards the brief build window so overlapping events for the same new
 # workspace don't clone it twice. It is released once the build finishes — the
 # durable "already done" guard is ws_is_fresh (a built workspace is no longer
-# fresh), so claims never linger and a recycled workspace id can't be blocked by
-# a stale one.
-claim_dir() { printf '%s/claimed/%s' "$STATE" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+# fresh), so claims are not meant to outlive the work they guard.
+claim_name() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'; }
+claim_dir()  { printf '%s/claimed/%s' "$STATE" "$(claim_name "$1")"; }
 claim()   { mkdir "$(claim_dir "$1")" 2>/dev/null; }   # atomic; non-zero if held
 unclaim() { rmdir "$(claim_dir "$1")" 2>/dev/null || true; }
+
+# One way out doesn't release its claim: a popup whose workspace is closed from
+# somewhere else is orphaned rather than signalled — its trap never runs, and it
+# sits blocked on a read that will never return. herdr recycles short workspace
+# ids, so that leftover claim would silently stop the next workspace given the
+# same id from ever being cloned into. Drop claims whose workspace is gone, the
+# same way the populated-workspace history drops ids that no longer exist.
+sweep_claims() { # snap
+  live=$(printf '%s' "$1" | jq -r '.workspaces[].workspace_id' 2>/dev/null) || return 0
+  # An empty list means the snapshot failed, not that every workspace closed —
+  # sweeping on that would release claims that are still guarding a live build.
+  [ -n "$live" ] || return 0
+  keep=$(printf '%s\n' "$live" | while IFS= read -r w; do
+    [ -n "$w" ] && claim_name "$w"
+  done)
+  for held in "$STATE"/claimed/*; do
+    [ -d "$held" ] || continue
+    name=${held##*/}
+    printf '%s\n' "$keep" | grep -qxF "$name" && continue
+    log "dropping stale claim $name"
+    rmdir "$held" 2>/dev/null || true
+  done
+}
 
 # Populate a workspace that has just appeared or been focused, if it is a fresh
 # (1-tab/1-pane) workspace and a populated source is known. The claim is taken
@@ -403,6 +426,7 @@ try_populate() { # new_ws
   [ -n "$new" ] || return 0
   snap=$(snapshot)
   remember_populated "$snap"
+  sweep_claims "$snap"
   ws_known "$new" && { log "$new has held a layout before, skip"; return 0; }
   ws_is_fresh "$snap" "$new" || { log "$new not fresh, skip"; return 0; }
   source=$(pick_source "$snap" "$new")

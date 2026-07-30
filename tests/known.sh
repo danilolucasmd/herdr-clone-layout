@@ -89,5 +89,29 @@ check 'a malformed snapshot leaves history intact'   yes "$(known_says w1)"
 remember_populated ''
 check 'no snapshot at all leaves history intact'     yes "$(known_says w1)"
 
+# --- claims must not outlive the workspace they guard -------------------------
+# A popup whose workspace is closed from elsewhere is orphaned without ever
+# running its trap, leaving its claim behind; herdr reuses short workspace ids,
+# so that claim would silently block the next workspace handed the same one.
+held() { [ -d "$(claim_dir "$1")" ] && echo yes || echo no; }
+
+claim w1; claim w2
+check 'a claim is held once taken'                   yes "$(held w1)"
+sweep_claims "$(snap_of 'w1:1:1')"
+check 'a claim for a closed workspace is dropped'    no  "$(held w2)"
+check 'a claim for a live workspace is kept'         yes "$(held w1)"
+
+# Sweeping on a failed snapshot would release claims that are still guarding a
+# live build, so those are left exactly as they are.
+claim w2
+sweep_claims '{"workspaces":[]}'
+check 'an empty snapshot sweeps nothing'             yes "$(held w2)"
+sweep_claims 'not json'
+check 'a malformed snapshot sweeps nothing'          yes "$(held w2)"
+sweep_claims ''
+check 'no snapshot at all sweeps nothing'            yes "$(held w2)"
+unclaim w1; unclaim w2
+check 'and a released claim is gone'                 no  "$(held w1)"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

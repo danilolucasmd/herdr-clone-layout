@@ -43,6 +43,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **This box starts ticked**, so out of the box a clone now re-runs your
   commands: a second dev server will fight the first for its port, and an agent
   pane starts a fresh agent. Untick it for the old bare-shell behaviour.
+- **Esc closes the new workspace** instead of leaving it behind empty: cancelling
+  the popup now undoes the whole thing, and herdr moves you to another workspace
+  as it goes. Ctrl-D does the same. It only closes the workspace it was asked
+  about, and only while that workspace still has the one tab and one pane it was
+  asked about and nothing running in it — the popup doesn't hold the keyboard,
+  so anything you put in there in the meantime keeps it alive, with the reason
+  logged.
 - `tests/keys.sh`, driving the popup through its own key handling — the keys
   arrive on stdin and a stub herdr stands in for the session, so it needs no
   terminal and runs in CI alongside the rest.
@@ -65,6 +72,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the `workspace.created` / `workspace.focused` hooks build for the same new
   workspace.
 - A failed or empty snapshot is no longer read as "every workspace was closed".
+- Drop claims left behind by a workspace that no longer exists. A popup whose
+  workspace is closed from somewhere else is orphaned rather than signalled, so
+  its trap never runs and its claim stayed forever; since herdr recycles short
+  workspace ids, that claim would silently stop the next workspace given the same
+  id from ever being cloned into.
 
 ## [0.1.0] — Unreleased
 

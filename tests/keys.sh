@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 # End-to-end tests for the dialog's key handling — the popup driven the way a
 # keyboard drives it, with the keys arriving on stdin instead of from a terminal
-# and a stub herdr standing in for a session. Each case checks the three things
-# an answer decides: whether a layout is cloned, where its panes open, and what
-# is remembered for the next new workspace.
+# and a stub herdr standing in for a session. Each case checks what an answer
+# decides: whether a layout is cloned, where its panes open, what is remembered
+# for the next new workspace, and whether the workspace survives being cancelled.
 #
 #   ./tests/keys.sh
 #
@@ -29,13 +29,27 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 DIR="$TMP/repo"
 mkdir -p "$DIR"
 
-# A herdr that answers `api snapshot` with an empty session and ignores the rest.
-# The dialog logs which answer it took before it starts building, so an empty
-# snapshot is enough to test the decisions without simulating a whole session.
+# A herdr standing in for a session holding one workspace: w7, the fresh one the
+# popup is being asked about. $WS_STATE picks what the popup finds if it goes to
+# close it on the way out — an untouched workspace, one that has grown a second
+# tab since, or one whose pane is running something. Every `workspace close` is
+# recorded in $CLOSED, which is how the cancel cases below are checked.
 cat >"$TMP/herdr" <<'STUB'
 #!/usr/bin/env sh
-case "$*" in
-  "api snapshot") printf '{"result":{"snapshot":{"tabs":[],"panes":[],"workspaces":[],"layouts":[]}}}\n' ;;
+counts='"tab_count":1,"pane_count":1'
+[ "${WS_STATE:-idle}" = dirty ] && counts='"tab_count":2,"pane_count":2'
+case "$1 $2" in
+  "api snapshot")
+    printf '{"result":{"snapshot":{"focused_workspace_id":"w7","workspaces":[{"workspace_id":"w7",%s,"worktree":null}],"tabs":[{"workspace_id":"w7","tab_id":"w7:t1","label":""}],"panes":[{"pane_id":"w7:p1","workspace_id":"w7","tab_id":"w7:t1","cwd":"/tmp"}],"layouts":[]}}}\n' "$counts"
+    ;;
+  "pane process-info")
+    if [ "${WS_STATE:-idle}" = busy ]; then
+      printf '{"result":{"process_info":{"pane_id":"w7:p1","shell_pid":10,"foreground_process_group_id":77,"foreground_processes":[{"cmdline":"nvim .","pid":77}]}}}\n'
+    else
+      printf '{"result":{"process_info":{"pane_id":"w7:p1","shell_pid":10,"foreground_process_group_id":10,"foreground_processes":[{"cmdline":"/bin/sh","pid":10}]}}}\n'
+    fi
+    ;;
+  "workspace close") printf '%s\n' "$3" >>"$CLOSED" ;;
   *) : ;;
 esac
 STUB
@@ -63,15 +77,19 @@ ESC=$(printf '\033')
 SPACE=' '
 
 # Types the keys into a fresh popup and reports what it decided, as
-# "<log>|<clone box>|<apps box>|<workspaces recorded as done>". The two optional
-# arguments seed the boxes, standing in for a popup answered earlier.
+# "<log>|<clone box>|<apps box>|<recorded as done>|<workspace closed>". The two
+# optional arguments seed the boxes, standing in for a popup answered earlier.
 answer() { # keys [stored_clone_box] [stored_apps_box]
   state=$TMP/state
   rm -rf "$state"
   mkdir -p "$state"
+  WS_STATE=${WS_STATE:-idle}
+  export WS_STATE
   [ -n "${2:-}" ] && printf '%s\n' "$2" >"$state/clone-enabled"
   [ -n "${3:-}" ] && printf '%s\n' "$3" >"$state/reopen-apps"
   printf '%s' "$1" >"$TMP/keys"
+  CLOSED=$state/closed
+  export CLOSED
 
   HERDR_PLUGIN_STATE_DIR=$state \
   HERDR_PLUGIN_ROOT=$ROOT \
@@ -81,71 +99,92 @@ answer() { # keys [stored_clone_box] [stored_apps_box]
   CLONE_LAYOUT_DIR=$DIR \
     sh "$DIALOG" <"$TMP/keys" >/dev/null 2>&1
 
-  printf '%s|%s|%s|%s' \
+  printf '%s|%s|%s|%s|%s' \
     "$(sed -n 's/^[0-9:]* dialog: //p' "$state/clone-layout.log" 2>/dev/null | head -n 1)" \
     "$(cat "$state/clone-enabled" 2>/dev/null || echo '(unset)')" \
     "$(cat "$state/reopen-apps" 2>/dev/null || echo '(unset)')" \
-    "$(cat "$state/populated-workspaces" 2>/dev/null || echo '(none)')"
+    "$(cat "$state/populated-workspaces" 2>/dev/null || echo '(none)')" \
+    "$(cat "$state/closed" 2>/dev/null || echo '(none)')"
 }
 
 # --- the two directory answers, with both boxes left ticked ------------------
 check 'enter clones as-is, as it always has' \
-  "clone w1 -> w7 as-is|1|1|w7"      "$(answer "$ENTER")"
+  "clone w1 -> w7 as-is|1|1|w7|(none)"    "$(answer "$ENTER")"
 check 'the directory row clones into it' \
-  "clone w1 -> w7 in $DIR|1|1|w7"    "$(answer "$DOWN$ENTER")"
+  "clone w1 -> w7 in $DIR|1|1|w7|(none)"  "$(answer "$DOWN$ENTER")"
 check 'confirming on a box clones as-is' \
-  "clone w1 -> w7 as-is|1|1|w7"      "$(answer "$DOWN$DOWN$ENTER")"
+  "clone w1 -> w7 as-is|1|1|w7|(none)"    "$(answer "$DOWN$DOWN$ENTER")"
 check 'tab wraps past both boxes to the top' \
-  "clone w1 -> w7 as-is|1|1|w7"      "$(answer "$TAB$TAB$TAB$TAB$ENTER")"
+  "clone w1 -> w7 as-is|1|1|w7|(none)"    "$(answer "$TAB$TAB$TAB$TAB$ENTER")"
 
 # --- unticking the first box, then confirming above it -----------------------
 # The boxes are rows of their own, so the flow is: down to one, space, back up to
 # one of the two directory answers, enter. Whichever of the two you come back to,
 # an unticked first box means nothing is cloned.
 check 'unticked, confirmed from the top row' \
-  "clone off, leaving w7 as it is|0|1|w7" "$(answer "$DOWN$DOWN$SPACE$UP$UP$ENTER")"
+  "clone off, leaving w7 as it is|0|1|w7|(none)" "$(answer "$DOWN$DOWN$SPACE$UP$UP$ENTER")"
 check 'unticked, confirmed from the directory row' \
-  "clone off, leaving w7 as it is|0|1|w7" "$(answer "$DOWN$DOWN$SPACE$UP$ENTER")"
+  "clone off, leaving w7 as it is|0|1|w7|(none)" "$(answer "$DOWN$DOWN$SPACE$UP$ENTER")"
 check 'ticking it back on clones again' \
-  "clone w1 -> w7 as-is|1|1|w7"      "$(answer "$DOWN$DOWN$SPACE$SPACE$UP$UP$ENTER")"
+  "clone w1 -> w7 as-is|1|1|w7|(none)"    "$(answer "$DOWN$DOWN$SPACE$SPACE$UP$UP$ENTER")"
 
 # --- the second box, one row further down ------------------------------------
 # It doesn't change what Enter does, only what the clone copies, so the log line
 # is the same either way and the remembered answer is what moves.
 check 'unticking the apps box still clones' \
-  "clone w1 -> w7 as-is|1|0|w7"      "$(answer "$DOWN$DOWN$DOWN$SPACE$ENTER")"
+  "clone w1 -> w7 as-is|1|0|w7|(none)"    "$(answer "$DOWN$DOWN$DOWN$SPACE$ENTER")"
 check 'a stored no opens the apps box unticked' \
-  "clone w1 -> w7 as-is|1|0|w7"      "$(answer "$ENTER" '' 0)"
+  "clone w1 -> w7 as-is|1|0|w7|(none)"    "$(answer "$ENTER" '' 0)"
 check 'and space on it ticks it back on' \
-  "clone w1 -> w7 as-is|1|1|w7"      "$(answer "$DOWN$DOWN$DOWN$SPACE$ENTER" '' 0)"
+  "clone w1 -> w7 as-is|1|1|w7|(none)"    "$(answer "$DOWN$DOWN$DOWN$SPACE$ENTER" '' 0)"
 check 'both boxes are written by one enter' \
-  "clone off, leaving w7 as it is|0|0|w7" \
+  "clone off, leaving w7 as it is|0|0|w7|(none)" \
   "$(answer "$DOWN$DOWN$SPACE$DOWN$SPACE$ENTER")"
 
 # --- what the boxes remember -------------------------------------------------
 check 'a stored no opens the popup unticked' \
-  "clone off, leaving w7 as it is|0|1|w7" "$(answer "$ENTER" 0)"
+  "clone off, leaving w7 as it is|0|1|w7|(none)" "$(answer "$ENTER" 0)"
 check 'and space on the box undoes it' \
-  "clone w1 -> w7 as-is|1|1|w7"      "$(answer "$DOWN$DOWN$SPACE$ENTER" 0)"
+  "clone w1 -> w7 as-is|1|1|w7|(none)"    "$(answer "$DOWN$DOWN$SPACE$ENTER" 0)"
 
-# --- esc decides nothing, including about the boxes --------------------------
-check 'esc after unticking leaves both as they were' \
-  "cancelled for w7|(unset)|(unset)|(none)" \
+# --- esc decides nothing, and takes the workspace with it --------------------
+# Cancelling means the new workspace wasn't wanted, so it goes rather than being
+# left behind empty. It still decides nothing about the boxes.
+check 'esc closes the workspace it was asked about' \
+  "cancelled for w7|(unset)|(unset)|(none)|w7"  "$(answer "$ESC")"
+check 'ctrl-d does the same' \
+  "cancelled for w7|(unset)|(unset)|(none)|w7"  "$(answer "$(printf '\004')")"
+check 'esc after unticking leaves both boxes as they were' \
+  "cancelled for w7|(unset)|(unset)|(none)|w7" \
   "$(answer "$DOWN$DOWN$SPACE$DOWN$SPACE$ESC")"
+
+# But only an untouched workspace: the popup doesn't hold the keyboard hostage,
+# and whatever someone put in there while it was up is theirs, not ours to close.
+check 'a workspace that grew a tab meanwhile is kept' \
+  "cancelled for w7|(unset)|(unset)|(none)|(none)" \
+  "$(WS_STATE=dirty answer "$ESC")"
+check 'so is one whose pane is running something' \
+  "cancelled for w7|(unset)|(unset)|(none)|(none)" \
+  "$(WS_STATE=busy answer "$ESC")"
+
+# A popup that never got an answer at all decides nothing either way — the
+# workspace stays, because nobody said they didn't want it.
+check 'an abandoned popup closes nothing' \
+  "stdin closed for w7|(unset)|(unset)|(none)|(none)" "$(answer '')"
 
 # --- space belongs to the row it is standing on ------------------------------
 # The top row has two boxes below it and no way to say which one is meant, so
 # space does nothing there rather than guessing.
 check 'space on the top row changes nothing' \
-  "clone w1 -> w7 as-is|1|1|w7"      "$(answer "$SPACE$ENTER")"
+  "clone w1 -> w7 as-is|1|1|w7|(none)"    "$(answer "$SPACE$ENTER")"
 # On the directory row a space is a character, so it lands in the path and the
 # popup stays open on a directory that isn't there — deciding nothing.
 check 'space on the directory row types a space' \
-  "stdin closed for w7|(unset)|(unset)|(none)" "$(answer "$DOWN$SPACE$ENTER")"
+  "stdin closed for w7|(unset)|(unset)|(none)|(none)" "$(answer "$DOWN$SPACE$ENTER")"
 
 # --- a directory that isn't there is not an answer ---------------------------
 check 'a bad path keeps the popup open' \
-  "stdin closed for w7|(unset)|(unset)|(none)" "$(answer "${DOWN}/nowhere/at/all$ENTER")"
+  "stdin closed for w7|(unset)|(unset)|(none)|(none)" "$(answer "${DOWN}/nowhere/at/all$ENTER")"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
