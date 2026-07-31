@@ -42,6 +42,8 @@ workspace you were just in.
 - **Just the herdr CLI underneath.** The result is ordinary tabs and panes —
   nothing proprietary to unwind.
 
+  <img width="1194" height="702" alt="07-31-2026-12:32:58" src="https://github.com/user-attachments/assets/4aca4a1f-6e62-4107-b3f4-523e094294ae" />
+
 ## Install
 
 Requires **herdr ≥ 0.7.0** and **[jq](https://jqlang.github.io/jq/)** on your `PATH`.
