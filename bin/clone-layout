@@ -422,13 +422,19 @@ sweep_claims() { # snap
   keep=$(printf '%s\n' "$live" | while IFS= read -r w; do
     [ -n "$w" ] && claim_name "$w"
   done)
-  for held in "$STATE"/claimed/*; do
-    [ -d "$held" ] || continue
-    name=${held##*/}
-    printf '%s\n' "$keep" | grep -qxF "$name" && continue
-    log "dropping stale claim $name"
-    rmdir "$held" 2>/dev/null || true
-  done
+  # Only claims old enough that no build could still be behind them. "Not in this
+  # snapshot" is not enough on its own: hooks run concurrently and each carries
+  # its own snapshot, so a workspace created a moment ago is missing from the one
+  # a hook that started first is holding. Dropping that claim hands the same new
+  # workspace to a second hook, which clones it behind the popup the first one
+  # just opened — which is the very thing the claim exists to prevent.
+  find "$STATE/claimed" -mindepth 1 -maxdepth 1 -type d -mmin +10 2>/dev/null \
+  | while IFS= read -r held; do
+      name=${held##*/}
+      printf '%s\n' "$keep" | grep -qxF "$name" && continue
+      log "dropping stale claim $name"
+      rmdir "$held" 2>/dev/null || true
+    done
 }
 
 # Populate a workspace that has just appeared or been focused, if it is a fresh

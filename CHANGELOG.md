@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2]
+
+### Fixed
+
+- **The layout was sometimes cloned before you answered the popup.** Claims for
+  workspaces that no longer exist are swept on every pass, but "no longer exists"
+  was decided from the snapshot the sweeping hook happened to be carrying. Hooks
+  run concurrently and each reads its own, so a workspace created a moment ago is
+  missing from the snapshot a hook that started first is holding — and it dropped
+  a claim that was very much alive. That handed the same new workspace to a
+  second hook, whose `plugin pane open` failed because the first one's popup was
+  already up, so it fell through to cloning directly: the layout appeared behind
+  the popup before you had answered it, and cancelling could no longer undo it
+  ("is not empty any more, keeping it"). A claim is now only swept once it is old
+  enough that no build could still be behind it, so a live one is never taken
+  away.
+
 ## [0.5.1]
 
 ### Fixed
@@ -153,6 +170,7 @@ First public release.
 - Activity log with a 500-line cap, silenced with `HERDR_CLONE_LAYOUT_LOG=0`.
 - Offline fixture tests for the snapshot-geometry analysis (`./tests/run.sh`).
 
+[0.5.2]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.2
 [0.5.1]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.1
 [0.5.0]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.0
 [0.4.1]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.4.1

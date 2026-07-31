@@ -94,16 +94,36 @@ check 'no snapshot at all leaves history intact'     yes "$(known_says w1)"
 # running its trap, leaving its claim behind; herdr reuses short workspace ids,
 # so that claim would silently block the next workspace handed the same one.
 held() { [ -d "$(claim_dir "$1")" ] && echo yes || echo no; }
+# Old enough that the sweep will consider it — the claim of a hook that died long
+# ago, rather than one still being worked behind.
+age() { touch -t 202001010000 "$(claim_dir "$1")"; }
 
 claim w1; claim w2
 check 'a claim is held once taken'                   yes "$(held w1)"
+
+# The regression this age test exists for: hooks run concurrently and each holds
+# its own snapshot, so a workspace created moments ago is missing from the one a
+# hook that started first is carrying. Sweeping on absence alone dropped that
+# live claim, handed the same new workspace to a second hook, and the layout was
+# cloned behind the popup the first hook had just opened — before the user had
+# answered it.
 sweep_claims "$(snap_of 'w1:1:1')"
-check 'a claim for a closed workspace is dropped'    no  "$(held w2)"
-check 'a claim for a live workspace is kept'         yes "$(held w1)"
+check 'a claim too young to be stale survives'       yes "$(held w2)"
+
+age w2
+sweep_claims "$(snap_of 'w1:1:1')"
+check 'an old claim for a closed workspace is dropped' no  "$(held w2)"
+check 'a claim for a live workspace is kept'           yes "$(held w1)"
+
+# Age alone is not enough either: a workspace that is still there keeps its
+# claim however long the build behind it has been running.
+age w1
+sweep_claims "$(snap_of 'w1:1:1')"
+check 'an old claim for a live workspace is kept'    yes "$(held w1)"
 
 # Sweeping on a failed snapshot would release claims that are still guarding a
 # live build, so those are left exactly as they are.
-claim w2
+claim w2; age w2
 sweep_claims '{"workspaces":[]}'
 check 'an empty snapshot sweeps nothing'             yes "$(held w2)"
 sweep_claims 'not json'
