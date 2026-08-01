@@ -96,12 +96,16 @@ answer() { # keys [stored_clone_box] [stored_apps_box]
   CLOSED=$state/closed
   export CLOSED
 
+  # The hook decides the kind from the same snapshot the stub is serving, so a
+  # worktree in $WS_KIND is a worktree to the popup too — which is what takes the
+  # directory row out of it.
   HERDR_PLUGIN_STATE_DIR=$state \
   HERDR_PLUGIN_ROOT=$ROOT \
   HERDR_BIN_PATH=$TMP/herdr \
   CLONE_LAYOUT_TARGET=w7 \
   CLONE_LAYOUT_FROM=w1 \
   CLONE_LAYOUT_DIR=$DIR \
+  CLONE_LAYOUT_KIND=$WS_KIND \
     sh "$DIALOG" <"$TMP/keys" >/dev/null 2>&1
 
   printf '%s|%s|%s|%s|%s' \
@@ -185,9 +189,31 @@ check 'and ctrl-d leaves it alone too' \
 check 'a worktree still clones on enter' \
   "clone w1 -> w7 as-is|1|1|w7|(none)" \
   "$(WS_KIND=worktree answer "$ENTER")"
-check 'and still honours an unticked box' \
+
+# --- a worktree has no directory row -----------------------------------------
+# Its directory was settled when the checkout was made, so the only question left
+# is what a clone copies: the two boxes sit one row below the top instead of
+# three, and there is nothing between them and it.
+check 'the first box is one row down for a worktree' \
   "clone off, leaving w7 as it is|0|1|w7|(none)" \
-  "$(WS_KIND=worktree answer "$DOWN$DOWN$SPACE$UP$UP$ENTER")"
+  "$(WS_KIND=worktree answer "$DOWN$SPACE$UP$ENTER")"
+check 'and the apps box is the row after that' \
+  "clone w1 -> w7 as-is|1|0|w7|(none)" \
+  "$(WS_KIND=worktree answer "$DOWN$DOWN$SPACE$ENTER")"
+check 'down stops on the last box' \
+  "clone w1 -> w7 as-is|1|0|w7|(none)" \
+  "$(WS_KIND=worktree answer "$DOWN$DOWN$DOWN$DOWN$SPACE$ENTER")"
+# Three tabs is all the way round and back to the top, where space toggles
+# nothing — a fourth row would still be a box under this one.
+check 'tab wraps round three rows, not four' \
+  "clone w1 -> w7 as-is|1|1|w7|(none)" \
+  "$(WS_KIND=worktree answer "$TAB$TAB$TAB$SPACE$ENTER")"
+# With nowhere for a path to go, typing one is not an answer to anything: the
+# keys are dropped and Enter clones as-is, rather than landing on a directory row
+# that isn't on screen and failing to find what was typed.
+check 'typing a path does nothing without the row' \
+  "clone w1 -> w7 as-is|1|1|w7|(none)" \
+  "$(WS_KIND=worktree answer "/nowhere/at/all$ENTER")"
 
 # A popup that never got an answer at all decides nothing either way — the
 # workspace stays, because nobody said they didn't want it.

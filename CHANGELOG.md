@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0]
+
+### Changed
+
+- **A worktree's popup no longer offers a directory for its panes.** A worktree
+  is a checkout of its own, made where it was made, and the layout worth having
+  in it is the one you came from — panes in the checkout, like the branch you
+  just left. Opening them somewhere else is a question about a new workspace, so
+  the `panes open in` row is gone from `new worktree`: the two checkboxes move up
+  a row, Enter clones as-is from any of them, and typing a path does nothing
+  since there's no field to type it into. A new workspace's popup is unchanged.
+
 ## [0.5.2]
 
 ### Fixed
@@ -170,6 +182,7 @@ First public release.
 - Activity log with a 500-line cap, silenced with `HERDR_CLONE_LAYOUT_LOG=0`.
 - Offline fixture tests for the snapshot-geometry analysis (`./tests/run.sh`).
 
+[0.6.0]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.6.0
 [0.5.2]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.2
 [0.5.1]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.1
 [0.5.0]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.0

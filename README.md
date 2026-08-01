@@ -96,11 +96,6 @@ Two answers and two switches. The **first two rows** decide *where the panes
 open* and are what **Enter** confirms; the **two checkboxes** decide *what a
 clone is*, and stay ticked the way you leave them.
 
-For a **worktree** it's the same popup, titled `new worktree`, with the directory
-row already on the worktree's checkout — so confirming it unchanged is exactly
-what a worktree did before it was asked at all. The one difference is
-[cancelling](#cancelling): a worktree is never thrown away.
-
 - **Enter** — clone the layout, exactly as the plugin has always done.
 - **Down**, then edit the path and **Enter** — the same tabs and splits, but
   every pane spawned in that directory instead. `~` works, the path must exist,
@@ -115,6 +110,33 @@ Typing jumps straight to the path field. **Ctrl-U** clears it, **Ctrl-W** delete
 back a path segment. Space belongs to the row it's standing on: it toggles a box,
 types a space in the path field, and does nothing on the top row — with two boxes
 there's no one box it could mean.
+
+### A worktree's popup
+
+It's the same popup, titled `new worktree`, minus the directory row:
+
+```
+  new worktree
+
+  > clone current layout
+      the same tabs and splits as ~/Code/herdr-clone-layout
+
+    options
+    [x] clone layouts into new workspaces
+    [x] reopen the apps each pane was running
+
+  ^ v switch    enter confirm    esc cancel
+```
+
+A worktree is a checkout of its own, made where it was made, and the layout worth
+having in it is the one you came from — with its panes in the checkout, like the
+branch you just left. Opening them somewhere else is a question about a new
+workspace, not about a worktree, so it isn't asked here: **Enter** clones, and the
+two boxes are all there is left to decide. Typing a path does nothing, since
+there's no field for it to go in.
+
+The other difference is [cancelling](#cancelling): a worktree is never thrown
+away.
 
 ### Reopening the apps
 

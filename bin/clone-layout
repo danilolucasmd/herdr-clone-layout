@@ -169,8 +169,8 @@ ws_is_focused() { # snap ws
 }
 
 # Is $ws a linked git worktree? Its directory was settled when it was created, so
-# the popup's directory row opens on the checkout — and cancelling never throws
-# one away, since a worktree is a checkout on disk and not just a workspace.
+# the popup leaves the directory row out — and cancelling never throws one away,
+# since a worktree is a checkout on disk and not just a workspace.
 ws_is_worktree() { # snap ws
   printf '%s' "$1" | jq -e --arg w "$2" \
     'any(.workspaces[]; .workspace_id == $w and .worktree.is_linked_worktree == true)' \
@@ -497,8 +497,9 @@ should_prompt() { # snap ws
 
 open_dialog() { # snap source target
   dir=$(ws_dir "$1" "$2")
-  # What the popup calls the thing it is asking about, and what cancelling it is
-  # allowed to do: a worktree is never thrown away, a plain workspace is.
+  # What the popup calls the thing it is asking about, what it asks — a worktree
+  # is not offered a directory for its panes — and what cancelling is allowed to
+  # do: a worktree is never thrown away, a plain workspace is.
   kind=workspace
   ws_is_worktree "$1" "$3" && kind=worktree
   log "prompt for $3 ($kind, source $2, dir ${dir:-unknown})"

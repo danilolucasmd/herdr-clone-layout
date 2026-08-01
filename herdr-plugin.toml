@@ -1,6 +1,6 @@
 id = "herdr-clone-layout"
 name = "Clone Layout"
-version = "0.5.2"
+version = "0.6.0"
 min_herdr_version = "0.7.0"
 description = "Every new workspace/worktree inherits the tab + pane-split geometry of the workspace you were just in (geometry only — panes open as bare shells)."
 platforms = ["linux", "macos"]
@@ -24,8 +24,9 @@ command = ["sh", "bin/clone-layout", "event"]
 # The popup a new workspace or worktree gets: clone the layout as-is, clone it
 # with every pane opened in a directory you choose, or — with the first of the two
 # checkboxes unticked — don't clone at all, now or for the next one. The second
-# decides whether the panes reopen what they were running. A worktree's directory
-# row opens on its checkout, and cancelling never removes the checkout.
+# decides whether the panes reopen what they were running. A worktree is asked
+# only the first of those — its directory was settled when the checkout was made —
+# and cancelling never removes the checkout.
 [[panes]]
 id = "choose-layout"
 title = "clone layout"
