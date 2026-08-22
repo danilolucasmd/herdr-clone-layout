@@ -195,6 +195,71 @@ kill_word() {
   done
 }
 
+# Cut a line down to what the popup is wide enough for.
+fit() { # text
+  if [ "${#1}" -gt 58 ]; then printf '%.57s…' "$1"; else printf '%s' "$1"; fi
+}
+
+# Tab completion for the directory field, against what is on disk. Directories
+# only: a directory is the only answer this field can take, so offering files
+# would only ever be offering wrong ones. One match is filled in whole with its
+# slash, so the next Tab walks straight into it; several are filled in as far as
+# they agree and then named underneath, which is all the room there is to show
+# them in; none leaves what was typed alone and says so.
+complete_path() { # edits $input, sets $note
+  # The stub is split off the display form rather than the expanded one, so what
+  # is put back is in the form it was typed in — completing "~/Co" must not turn
+  # the field into /home/you/Code behind your back.
+  case "$input" in
+    */*) stub=${input##*/}; head=${input%"$stub"} ;;
+    '~') stub=''; head='~/' ;;   # inside home, not alongside it
+    *)   stub=$input; head='' ;;
+  esac
+  dir=$(expand_path "$head")
+  [ -n "$dir" ] || dir=./        # a bare name completes where the popup is
+
+  matches=0
+  common=''
+  listed=''
+  for entry in "$dir$stub"*/; do
+    # A glob that matched nothing comes back as itself, and the trailing slash
+    # is what keeps this to directories — a symlink to one included.
+    [ -d "$entry" ] || continue
+    name=${entry%/}
+    name=${name##*/}
+    matches=$((matches + 1))
+    if [ "$matches" -eq 1 ]; then
+      common=$name
+    else
+      # Trim what the matches so far agree on to what this one agrees with too.
+      # $common is quoted inside the pattern, so a directory named with a
+      # bracket or a star is matched as the name it is.
+      while [ -n "$common" ]; do
+        case "$name" in "$common"*) break ;; esac
+        common=${common%?}
+      done
+    fi
+    listed="$listed  $name"
+  done
+
+  if [ "$matches" -eq 0 ]; then
+    if [ -n "$stub" ]; then
+      note=$(fit "no directory starting with $stub")
+    else
+      note=$(fit "no directories in $(abbrev_path "$dir")")
+    fi
+    return
+  fi
+  if [ "$matches" -eq 1 ]; then
+    input="$head$common/"
+    return
+  fi
+  # As far as they agree, and then the names themselves — including when they
+  # agree on nothing more, which is exactly when the names are what is wanted.
+  input="$head$common"
+  note=$(fit "${listed#  }")
+}
+
 # ----------------------------------------------------------------------------
 # rendering
 # ----------------------------------------------------------------------------
@@ -229,6 +294,7 @@ LAST_ROW=$APPS_ROW   # up/down clamp against it
 # are remembered, so the boxes open the way they were left.
 input=$(abbrev_path "$DIR")
 err=''
+note=''      # what Tab has to say: the matches, or that there are none
 
 enabled=1
 clone_enabled || enabled=0
@@ -285,6 +351,12 @@ render() {
 
   if [ -n "$err" ]; then
     printf '  %s%s%s\r\n' "$(printf '\033[31m')" "$err" "$R"
+  elif [ -n "$note" ]; then
+    # What Tab found, in the line the key hints would otherwise have. It is
+    # gone again on the next keypress, so the hints are never far away.
+    printf '  %s%s%s\r\n' "$D" "$note" "$R"
+  elif [ "$row" -eq "$DIR_ROW" ]; then
+    printf '  %s^ v switch    tab complete    enter confirm    esc cancel%s\r\n' "$D" "$R"
   elif [ "$row" -lt "$CLONE_ROW" ]; then
     # Space only belongs to the row it is standing on, and with two boxes there
     # is no sensible box for it to toggle from the rows above them.
@@ -358,6 +430,7 @@ while :; do
   fi
   empty=0
   err=''
+  note=''
 
   case "$key" in
     "$CR" | "$LF")
@@ -434,8 +507,16 @@ while :; do
         if [ "$apps" -eq 1 ]; then apps=0; else apps=1; fi
       fi
       ;;
-    "$TAB")                                  # tab cycles the rows
-      row=$(( (row + 1) % (LAST_ROW + 1) ))
+    "$TAB")
+      # Tab completes the path when there is a path under it, and cycles the
+      # rows everywhere else — completing is what the key is for in a field, and
+      # the field is not a trap: up and down still leave it, and the hint line
+      # under it says which Tab you are getting.
+      if [ "$row" -eq "$DIR_ROW" ]; then
+        complete_path
+      else
+        row=$(( (row + 1) % (LAST_ROW + 1) ))
+      fi
       ;;
     *)
       # Printable input goes to the directory, and typing jumps you there so

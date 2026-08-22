@@ -82,6 +82,7 @@ SPACE=' '
 BS=$(printf '\010')       # ctrl-backspace, as a terminal sends it
 DEL=$(printf '\177')      # plain backspace
 CTRLW=$(printf '\027')
+CTRLU=$(printf '\025')
 
 # Types the keys into a fresh popup and reports what it decided, as
 # "<log>|<clone box>|<apps box>|<recorded as done>|<workspace closed>". The two
@@ -126,8 +127,13 @@ check 'the directory row clones into it' \
   "clone w1 -> w7 in $DIR|1|1|w7|(none)"  "$(answer "$DOWN$ENTER")"
 check 'confirming on a box clones as-is' \
   "clone w1 -> w7 as-is|1|1|w7|(none)"    "$(answer "$DOWN$DOWN$ENTER")"
-check 'tab wraps past both boxes to the top' \
-  "clone w1 -> w7 as-is|1|1|w7|(none)"    "$(answer "$TAB$TAB$TAB$TAB$ENTER")"
+# Tab is completion on the directory row, so it moves down onto that row once
+# and then stays there: $DIR completes to itself with the slash that would take
+# the next Tab into it, and there is nothing under it to go into.
+check 'tab completes on the directory row instead of moving on' \
+  "clone w1 -> w7 in $DIR/|1|1|w7|(none)" "$(answer "$TAB$TAB$TAB$TAB$ENTER")"
+check 'tab still moves between the rows that have no field' \
+  "clone w1 -> w7 as-is|1|0|w7|(none)"    "$(answer "$DOWN$DOWN$TAB$SPACE$ENTER")"
 
 # --- unticking the first box, then confirming above it -----------------------
 # The boxes are rows of their own, so the flow is: down to one, space, back up to
@@ -264,6 +270,18 @@ check 'ctrl-backspace on a bare name takes all of it' \
 check 'ctrl-backspace does nothing on a checkbox row' \
   "clone w1 -> w7 as-is|1|1|w7|(none)" \
   "$(answer "$DOWN$DOWN$BS$ENTER")"
+
+# --- and completing it -------------------------------------------------------
+# One match is filled in whole, so a typed prefix of the directory the popup
+# offered confirms into it.
+check 'tab completes a typed prefix' \
+  "clone w1 -> w7 in $DIR/|1|1|w7|(none)" \
+  "$(answer "$DOWN$CTRLU$TMP/re$TAB$ENTER")"
+# Nothing matching invents nothing: what was typed stays as it was, which is not
+# a directory, so the popup is still open and has decided nothing.
+check 'a prefix that matches nothing completes to nothing' \
+  "stdin closed for w7|(unset)|(unset)|(none)|(none)" \
+  "$(answer "$DOWN$CTRLU$TMP/zz$TAB$ENTER")"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

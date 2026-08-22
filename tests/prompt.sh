@@ -158,6 +158,42 @@ check 'ctrl-w takes the whole segment'      '~/Code'      "$(segment '~/Code/pro
 check 'hyphens and all'                     ''            "$(segment '/test-test')"
 check 'a trailing slash goes on its own'    '~/Code'      "$(segment '~/Code/')"
 
+# --- tab completion, against directories that are really there ---------------
+# A tree to complete against, inside the state directory the tests already clean
+# up: two names that share a prefix, one that doesn't, and a file to be ignored
+# since a file is never an answer to "which directory".
+TREE=$HERDR_PLUGIN_STATE_DIR/tree
+mkdir -p "$TREE/proj-one" "$TREE/proj-two" "$TREE/other/inner"
+: >"$TREE/proj-notes"
+
+fills()  { input=$1; note=''; complete_path; printf '%s' "$input"; }
+says()   { input=$1; note=''; complete_path; printf '%s' "$note"; }
+
+check 'one match is filled in with its slash' \
+  "$TREE/other/"        "$(fills "$TREE/oth")"
+check 'and the next tab walks into it' \
+  "$TREE/other/inner/"  "$(fills "$TREE/other/")"
+check 'several fill in as far as they agree' \
+  "$TREE/proj-"         "$(fills "$TREE/p")"
+check 'and are named underneath' \
+  'proj-one  proj-two'  "$(says "$TREE/p")"
+check 'a file is not a directory, so not a match' \
+  "$TREE/proj-n"        "$(fills "$TREE/proj-n")"
+check 'the only thing named proj-n being a file' \
+  'no directory starting with proj-n' "$(says "$TREE/proj-n")"
+check 'nothing matching leaves the path alone' \
+  "$TREE/zzz"           "$(fills "$TREE/zzz")"
+check 'and says why' \
+  'no directory starting with zzz' "$(says "$TREE/zzz")"
+check 'a leaf has nothing below it' \
+  "$TREE/proj-one/"     "$(fills "$TREE/proj-one/")"
+# The path is a temp directory of unpredictable length and the line is cut to
+# the popup's width, so it is the message that is checked, not the whole line.
+check 'which it says rather than guessing' \
+  'no directories in' "$(printf '%.17s' "$(says "$TREE/proj-one/")")"
+check 'completing keeps the tilde it was typed with' \
+  '~/'                  "$(fills '~')"
+
 # --- the control characters the key handling compares against ----------------
 # `LF=$(printf '\n')` is the empty string, and an Enter key compared against ""
 # never matches — the dialog would ignore the key that confirms it.

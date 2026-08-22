@@ -4,10 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.1]
+## [0.7.0]
 
 ### Added
 
+- **Tab completes the popup's directory field.** It completes against the
+  directories on disk — only directories, since that is the only answer the field
+  takes, so a file whose name matches is passed over. One match is filled in
+  whole with the slash that takes the next Tab into it; several fill in as far as
+  they agree and are then named under the field; none leaves what was typed
+  untouched and says so. Tab still moves between rows from every other row, but
+  not from that one: completion is what the key is for in a field, the arrow keys
+  still leave it, and the hint line under it says which Tab is on offer.
 - **Ctrl-Backspace deletes a word in the popup's directory field.** A terminal
   sends `0177` for backspace and `010` for ctrl-backspace, but the dialog treated
   the two bytes as the same key and deleted one character either way — so the
@@ -198,6 +206,7 @@ First public release.
 - Activity log with a 500-line cap, silenced with `HERDR_CLONE_LAYOUT_LOG=0`.
 - Offline fixture tests for the snapshot-geometry analysis (`./tests/run.sh`).
 
+[0.7.0]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.7.0
 [0.6.0]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.6.0
 [0.5.2]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.2
 [0.5.1]: https://github.com/danilolucasmd/herdr-clone-layout/releases/tag/v0.5.1

@@ -1,6 +1,6 @@
 id = "herdr-clone-layout"
 name = "Clone Layout"
-version = "0.6.1"
+version = "0.7.0"
 min_herdr_version = "0.7.0"
 description = "Every new workspace/worktree inherits the tab + pane-split geometry of the workspace you were just in (geometry only — panes open as bare shells)."
 platforms = ["linux", "macos"]

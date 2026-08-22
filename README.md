@@ -106,11 +106,11 @@ clone is*, and stay ticked the way you leave them.
   not left behind empty. Ctrl-D does the same. See
   [Cancelling](#cancelling).
 
-Typing jumps straight to the path field. **Backspace** deletes a character,
-**Ctrl-Backspace** a word, **Ctrl-W** a whole path segment, and **Ctrl-U** clears
-it. Space belongs to the row it's standing on: it toggles a box, types a space in
-the path field, and does nothing on the top row — with two boxes there's no one
-box it could mean.
+Typing jumps straight to the path field. **Tab** completes what's in it against
+the directories on disk; **Backspace** deletes a character, **Ctrl-Backspace** a
+word, **Ctrl-W** a whole path segment, and **Ctrl-U** clears it. Space belongs to
+the row it's standing on: it toggles a box, types a space in the path field, and
+does nothing on the top row — with two boxes there's no one box it could mean.
 
 ### A worktree's popup
 
@@ -404,6 +404,14 @@ The log is trimmed to its last 500 lines on each run.
 - **Additive.** The plugin builds panes and never tears them down. The one
   exception is the workspace's original root tab, closed when you pick a
   directory, because its pane can't be moved there.
+- **Tab completes on the path field, and moves between rows everywhere else.**
+  Only directories are offered — a directory is the only answer the field takes,
+  so a file that matches is skipped. One match is filled in whole with a trailing
+  slash, so the next Tab walks into it; several fill in as far as they agree and
+  are then named under the field; none leaves what you typed exactly as it is and
+  says so. Since Tab is completion there, that row is the one row Tab won't move
+  you off — the arrow keys still do, and the hints under the field say which Tab
+  you're getting.
 - **The dialog edits at the end of the line.** Backspace by character,
   Ctrl-Backspace (or Alt-Backspace) by word, Ctrl-W by path segment, and Ctrl-U
   to start over; there's no cursor to move mid-path. A word ends at anything that
