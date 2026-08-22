@@ -209,7 +209,10 @@ fit() { # text
 complete_path() { # edits $input, sets $note
   # The stub is split off the display form rather than the expanded one, so what
   # is put back is in the form it was typed in — completing "~/Co" must not turn
-  # the field into /home/you/Code behind your back.
+  # the field into /home/you/Code behind your back. That is also why the tilde
+  # below is a literal one and not $HOME: it is the text going back on screen,
+  # and expand_path is what turns it into a directory to look in.
+  # shellcheck disable=SC2088
   case "$input" in
     */*) stub=${input##*/}; head=${input%"$stub"} ;;
     '~') stub=''; head='~/' ;;   # inside home, not alongside it
