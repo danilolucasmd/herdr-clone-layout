@@ -79,6 +79,9 @@ ENTER=$(printf '\r')
 TAB=$(printf '\t')
 ESC=$(printf '\033')
 SPACE=' '
+BS=$(printf '\010')       # ctrl-backspace, as a terminal sends it
+DEL=$(printf '\177')      # plain backspace
+CTRLW=$(printf '\027')
 
 # Types the keys into a fresh popup and reports what it decided, as
 # "<log>|<clone box>|<apps box>|<recorded as done>|<workspace closed>". The two
@@ -233,6 +236,34 @@ check 'space on the directory row types a space' \
 # --- a directory that isn't there is not an answer ---------------------------
 check 'a bad path keeps the popup open' \
   "stdin closed for w7|(unset)|(unset)|(none)|(none)" "$(answer "${DOWN}/nowhere/at/all$ENTER")"
+
+# --- editing the path: the two backspaces are two different keys -------------
+# The field opens on $DIR, so a case that types something and takes it back
+# again lands on a directory that is there, and the log line says so. Backspace
+# is a character at a time: five of them undo the five that were typed, and one
+# would not have been enough if it had eaten the segment instead.
+check 'backspace deletes one character' \
+  "clone w1 -> w7 in $DIR|1|1|w7|(none)" \
+  "$(answer "$DOWN/nope$DEL$DEL$DEL$DEL$DEL$ENTER")"
+# Ctrl-backspace arrives as 010 rather than 0177, and takes a word: "nope" goes
+# and the slash it hung off stays, which is still $DIR to confirm into.
+check 'ctrl-backspace deletes a word' \
+  "clone w1 -> w7 in $DIR/|1|1|w7|(none)" \
+  "$(answer "$DOWN/nope$BS$ENTER")"
+# Ctrl-W is the bigger unit — the whole segment, slash and all — so the same
+# keystrokes land one character further back.
+check 'ctrl-w takes the segment instead' \
+  "clone w1 -> w7 in $DIR|1|1|w7|(none)" \
+  "$(answer "$DOWN/nope$CTRLW$ENTER")"
+# A word, not a character: one press takes back the whole of "repo", leaving
+# $TMP with the slash still on it.
+check 'ctrl-backspace on a bare name takes all of it' \
+  "clone w1 -> w7 in $TMP/|1|1|w7|(none)" \
+  "$(answer "$DOWN$BS$ENTER")"
+# Neither of them touches anything from a row without a field.
+check 'ctrl-backspace does nothing on a checkbox row' \
+  "clone w1 -> w7 as-is|1|1|w7|(none)" \
+  "$(answer "$DOWN$DOWN$BS$ENTER")"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

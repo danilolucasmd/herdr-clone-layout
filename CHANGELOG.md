@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1]
+
+### Added
+
+- **Ctrl-Backspace deletes a word in the popup's directory field.** A terminal
+  sends `0177` for backspace and `010` for ctrl-backspace, but the dialog treated
+  the two bytes as the same key and deleted one character either way — so the
+  modifier did nothing here while working everywhere else in the terminal. `010`
+  now deletes backwards a word at a time, the way a shell's backward-kill-word
+  does: any punctuation at the end goes first, then the run of letters and digits
+  in front of it, so `~/test-test` becomes `~/test-`, then `~/`. Alt-Backspace
+  (`ESC` `0177`) is the same key. Plain backspace still deletes a character, and
+  Ctrl-W still takes a whole path segment — `test-test` and its slash in one
+  press. A terminal configured to send `010` for an unmodified backspace deletes
+  a word at a time in this field.
+
 ## [0.6.0]
 
 ### Changed

@@ -163,6 +163,38 @@ abbrev_path() { # absolute -> display form
   esac
 }
 
+# Take back one path segment of $input — everything after the last slash, and
+# the slash with it. This is Ctrl-W's unit: the big one, a whole directory name
+# however it is punctuated.
+kill_segment() {
+  input=${input%"${input##*/}"}   # back to the last /
+  input=${input%/}
+}
+
+# Take back one word of $input, the way a shell's backward-kill-word does: any
+# punctuation sitting at the end goes first, then the run of letters and digits
+# in front of it. Everything that is not a letter or a digit is a boundary, so
+# /test-test loses "test" and stops on the hyphen, then loses "test-" and stops
+# on the slash. This is the smaller unit, and the one ctrl-backspace gets: a
+# path is edited a name at a time with Ctrl-W and a piece of a name at a time
+# with this.
+kill_word() {
+  # the punctuation behind the cursor: the hyphen, the slash, the dot
+  while [ -n "$input" ]; do
+    case "$input" in
+      *[[:alnum:]]) break ;;
+      *) input=${input%?} ;;
+    esac
+  done
+  # then the word it was hanging off
+  while [ -n "$input" ]; do
+    case "$input" in
+      *[[:alnum:]]) input=${input%?} ;;
+      *) break ;;
+    esac
+  done
+}
+
 # ----------------------------------------------------------------------------
 # rendering
 # ----------------------------------------------------------------------------
@@ -362,22 +394,31 @@ while :; do
       case "$seq" in
         '[A') [ "$row" -gt 0 ] && row=$((row - 1)) ;;            # up
         '[B') [ "$row" -lt "$LAST_ROW" ] && row=$((row + 1)) ;;   # down
+        # Alt-backspace, and the terminals that spell ctrl-backspace this way.
+        # Alt-backspace is backward-kill-word in a shell too, so it is the same
+        # unit here as the key it stands in for.
+        "$DEL" | "$BS") [ "$row" -eq "$DIR_ROW" ] && kill_word ;;
         '') cancel ;;                        # bare Esc
         *) : ;;                              # some other sequence, ignore
       esac
       ;;
     "$EOT") cancel ;;                        # ctrl-d, same as cancelling
-    "$BS" | "$DEL")
+    "$DEL")                                  # backspace: one character
       [ "$row" -eq "$DIR_ROW" ] && input=${input%?}
       ;;
     "$NAK")
       [ "$row" -eq "$DIR_ROW" ] && input=''
       ;;
-    "$ETB")
-      if [ "$row" -eq "$DIR_ROW" ]; then
-        input=${input%"${input##*/}"}        # back to the last /
-        input=${input%/}
-      fi
+    "$ETB")                                  # ctrl-w: a whole path segment
+      [ "$row" -eq "$DIR_ROW" ] && kill_segment
+      ;;
+    "$BS")
+      # Ctrl-backspace. A terminal sends 0177 for backspace and 010 for
+      # ctrl-backspace, so the two arrive as different bytes and the modifier can
+      # mean what it means everywhere else: a word, punctuation-delimited, rather
+      # than a character. (A terminal configured the other way round, with plain
+      # backspace on 010, deletes a word at a time here.)
+      [ "$row" -eq "$DIR_ROW" ] && kill_word
       ;;
     ' ')
       # Space ticks the box you are standing on. On the directory row it is an

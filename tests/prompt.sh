@@ -136,6 +136,28 @@ check 'home shortens back to a tilde'       '~/dotfiles'     "$(abbrev_path "$HO
 check 'home itself shortens to a tilde'     '~'              "$(abbrev_path "$HOME")"
 check 'a path outside home is left alone'   /var/tmp         "$(abbrev_path '/var/tmp')"
 
+# --- the two ways of deleting backwards in that path -------------------------
+# Both work on $input, so the helpers here stand a value in it and report what is
+# left. Ctrl-backspace takes a word: any punctuation at the end first, then the
+# letters and digits in front of it — so a hyphenated name comes off in pieces,
+# stopping on every boundary the way a shell's backward-kill-word does. Ctrl-W
+# takes the whole segment, punctuation and all.
+word()    { input=$1; kill_word;    printf '%s' "$input"; }
+segment() { input=$1; kill_segment; printf '%s' "$input"; }
+
+check 'a word stops at the hyphen'          '/test-'      "$(word '/test-test')"
+check 'and the next one takes the hyphen'   '/'           "$(word '/test-')"
+check 'and the one after that the slash'    ''            "$(word '/')"
+check 'a name comes off, the slash stays'   '~/Code/'     "$(word '~/Code/proj')"
+check 'then the slash, then the name'       '~/'          "$(word '~/Code/')"
+check 'a trailing space is punctuation too' '/tmp/a '     "$(word '/tmp/a b ')"
+check 'a dot is a boundary as well'         'notes.'      "$(word 'notes.txt')"
+check 'nothing to take is not an error'     ''            "$(word '')"
+
+check 'ctrl-w takes the whole segment'      '~/Code'      "$(segment '~/Code/proj')"
+check 'hyphens and all'                     ''            "$(segment '/test-test')"
+check 'a trailing slash goes on its own'    '~/Code'      "$(segment '~/Code/')"
+
 # --- the control characters the key handling compares against ----------------
 # `LF=$(printf '\n')` is the empty string, and an Enter key compared against ""
 # never matches — the dialog would ignore the key that confirms it.

@@ -106,10 +106,11 @@ clone is*, and stay ticked the way you leave them.
   not left behind empty. Ctrl-D does the same. See
   [Cancelling](#cancelling).
 
-Typing jumps straight to the path field. **Ctrl-U** clears it, **Ctrl-W** deletes
-back a path segment. Space belongs to the row it's standing on: it toggles a box,
-types a space in the path field, and does nothing on the top row — with two boxes
-there's no one box it could mean.
+Typing jumps straight to the path field. **Backspace** deletes a character,
+**Ctrl-Backspace** a word, **Ctrl-W** a whole path segment, and **Ctrl-U** clears
+it. Space belongs to the row it's standing on: it toggles a box, types a space in
+the path field, and does nothing on the top row — with two boxes there's no one
+box it could mean.
 
 ### A worktree's popup
 
@@ -403,8 +404,14 @@ The log is trimmed to its last 500 lines on each run.
 - **Additive.** The plugin builds panes and never tears them down. The one
   exception is the workspace's original root tab, closed when you pick a
   directory, because its pane can't be moved there.
-- **The dialog edits at the end of the line.** Backspace, Ctrl-W by path
-  segment, and Ctrl-U to start over; there's no cursor to move mid-path.
+- **The dialog edits at the end of the line.** Backspace by character,
+  Ctrl-Backspace (or Alt-Backspace) by word, Ctrl-W by path segment, and Ctrl-U
+  to start over; there's no cursor to move mid-path. A word ends at anything that
+  isn't a letter or a digit, the way a shell's backward-kill-word does, so
+  `~/test-test` goes to `~/test-`, then `~/`, then empty — while one Ctrl-W takes
+  `test-test` whole. Ctrl-Backspace works because a terminal sends `010` for it
+  and `0177` for a plain backspace; a terminal configured the other way round,
+  sending `010` unmodified, deletes a word at a time here.
 - **"No" is remembered for that workspace too.** Confirming with the first box
   unticked keeps the workspace but settles it, so switching back to it later
   doesn't reopen the popup. Esc settles it the same way whenever the workspace
