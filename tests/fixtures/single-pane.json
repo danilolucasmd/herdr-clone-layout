@@ -20,6 +20,6 @@
     ]
   },
   "expected": [
-    { "label": "agent", "steps": [] }
+    { "label": "agent", "steps": [], "panes": { "0": "w1:p1" } }
   ]
 }

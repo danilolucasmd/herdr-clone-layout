@@ -62,8 +62,8 @@
     ]
   },
   "expected": [
-    { "label": "nvim", "steps": [ { "parent": 0, "dir": "down", "ratio": 0.33, "child": 1 } ] },
-    { "label": "agent", "steps": [ { "parent": 0, "dir": "right", "ratio": 0.65, "child": 1 } ] },
-    { "label": "git", "steps": [] }
+    { "label": "nvim", "steps": [ { "parent": 0, "dir": "down", "ratio": 0.33, "child": 1 } ], "panes": { "0": "w1:p4", "1": "w1:p5" } },
+    { "label": "agent", "steps": [ { "parent": 0, "dir": "right", "ratio": 0.65, "child": 1 } ], "panes": { "0": "w1:p1", "1": "w1:p2" } },
+    { "label": "git", "steps": [], "panes": { "0": "w1:p3" } }
   ]
 }

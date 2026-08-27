@@ -186,6 +186,125 @@ ws_dir() { # snap ws
     // empty' 2>/dev/null
 }
 
+# ----------------------------------------------------------------------------
+# carrying pane directories across to a new checkout
+#
+# A worktree is the same tree under a different root, so a pane that was in
+# repo/src/components belongs in worktree/src/components — not at the top of the
+# worktree, which is all a pane inherits on its own. Each pane's directory is
+# measured against the checkout it belonged to and read off the new one.
+#
+# Only a new *linked worktree* of the same repository is treated this way. That
+# is the one case where the two directories are known to hold the same tree; a
+# plain new workspace has no such promise, and its panes inherit as before.
+# ----------------------------------------------------------------------------
+
+pane_cwd() { # snap pane
+  printf '%s' "$1" | jq -r --arg p "$2" \
+    'first(.panes[] | select(.pane_id == $p) | .cwd // empty) // empty' 2>/dev/null
+}
+
+# A trailing slash makes two spellings of one directory compare unequal and turns
+# "$to/$rel" into "$to//$rel"; "/" is the one path that is only a slash.
+strip_slash() { # dir
+  s=${1:-}
+  while [ "$s" != "/" ] && [ "${s%/}" != "$s" ]; do s=${s%/}; done
+  printf '%s' "$s"
+}
+
+# A directory's physical path, symlinks resolved, or empty if it is not there.
+# Two spellings of the same directory have to compare equal: a pane whose cwd
+# reaches the checkout through a symlink would otherwise look like it sits
+# outside it, and be left in the checkout it was cloned from.
+phys() { # dir
+  [ -n "${1:-}" ] || return 0
+  (CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P) || true
+}
+
+same_dir() { # a b
+  a=$(strip_slash "${1:-}"); b=$(strip_slash "${2:-}")
+  [ "$a" = "$b" ] && return 0
+  ap=$(phys "$a"); bp=$(phys "$b")
+  [ -n "$ap" ] && [ -n "$bp" ] && [ "$ap" = "$bp" ]
+}
+
+# $1's path relative to $2 — "." when they are the same directory, empty when $1
+# is not inside $2 at all. Resolved paths decide it when both directories exist;
+# the names as given are tried too, so a directory that has since been removed is
+# still measured rather than silently counted as outside.
+rel_under() { # dir base
+  d=$(strip_slash "${1:-}"); b=$(strip_slash "${2:-}")
+  [ -n "$d" ] || return 0
+  [ -n "$b" ] || return 0
+  dp=$(phys "$d"); [ -n "$dp" ] || dp=$d
+  bp=$(phys "$b"); [ -n "$bp" ] || bp=$b
+  case "$dp" in
+    "$bp")   printf '.'; return 0 ;;
+    "$bp"/*) printf '%s' "${dp#"$bp"/}"; return 0 ;;
+  esac
+  case "$d" in
+    "$b")   printf '.'; return 0 ;;
+    "$b"/*) printf '%s' "${d#"$b"/}"; return 0 ;;
+  esac
+  return 0
+}
+
+# The deepest directory at or above $1 that exists, never climbing above $2, and
+# $2 itself when nothing under it does. A pane can sit somewhere the new checkout
+# has never had — an ignored build directory, or one that only exists on the
+# branch it was cloned from — and a pane opened a level up is better than a pane
+# that fails to open at all.
+nearest_dir() { # dir floor
+  d=$(strip_slash "${1:-}"); floor=$(strip_slash "${2:-}")
+  # A directory that is not under the floor has no ancestors worth trying: the
+  # walk up would leave the checkout, and land a pane outside it.
+  [ -n "$(rel_under "$d" "$floor")" ] || { printf '%s' "$floor"; return 0; }
+  while [ -n "$d" ] && [ "$d" != "$floor" ] && [ ! -d "$d" ]; do
+    case $d in
+      */?*) d=${d%/*} ;;
+      *) d='' ;;
+    esac
+  done
+  if [ -n "$d" ] && [ -d "$d" ]; then printf '%s' "$d"; else printf '%s' "$floor"; fi
+}
+
+# Where a cloned pane should open. A pane outside the checkout it was cloned from
+# — notes in $HOME, a second repo — is not part of the tree being copied, so it
+# keeps the directory it already had.
+remap_dir() { # cwd from to
+  rel=$(rel_under "${1:-}" "${2:-}")
+  [ -n "$rel" ] || { printf '%s' "${1:-}"; return 0; }
+  to=$(strip_slash "${3:-}")
+  case $rel in
+    .) printf '%s' "$to" ;;
+    *) nearest_dir "$to/$rel" "$to" ;;
+  esac
+}
+
+# The two checkouts a clone is measured between — where the panes being cloned
+# live, and where the new ones should open — one per line, or nothing at all.
+#
+# The new workspace has to be a linked worktree: only then is there a second
+# checkout of one tree to carry directories across to. The source is its own
+# checkout when herdr reports one for the same repository; a workspace herdr
+# tracks no checkout for falls back to the repository's main checkout, which is
+# where its panes are if they are in that repository at all. A source in a
+# DIFFERENT repository is left alone — its paths mean nothing under this tree.
+remap_roots() { # snap source target
+  printf '%s' "$1" | jq -r --arg s "$2" --arg t "$3" '
+    (first(.workspaces[] | select(.workspace_id == $s) | .worktree) // null) as $src
+    | (first(.workspaces[] | select(.workspace_id == $t) | .worktree) // null) as $tgt
+    | if ($tgt == null) or ($tgt.is_linked_worktree != true)
+         or (($tgt.checkout_path // "") == "") then empty
+      else
+        (if $src == null then ($tgt.repo_root // "")
+         elif (($src.repo_root // "") != "") and (($src.repo_root // "") == ($tgt.repo_root // ""))
+           then ($src.checkout_path // "")
+         else "" end) as $from
+        | if $from == "" then empty else [$from, $tgt.checkout_path] | .[] end
+      end' 2>/dev/null
+}
+
 # Choose the workspace to clone from: the currently-focused one if it isn't the
 # new workspace, otherwise the most recent distinct entry in the focus history.
 # Only a populated workspace qualifies. Echoes the id (may be empty).
@@ -307,10 +426,46 @@ split_pane() { # target parent dir ratio cwd -> new pane id
 # ----------------------------------------------------------------------------
 # clone: rebuild source's tab/pane geometry inside the fresh target workspace
 # ----------------------------------------------------------------------------
+# Where each pane of the clone opens. A directory chosen in the popup wins
+# outright — every pane goes there, which is what choosing one means. Otherwise
+# the panes follow their sources across to the new checkout (see remap_roots);
+# failing that they inherit the new workspace's own directory, as they always did.
+# Set by do_clone, read by pane_dir inside its loop.
+FLAT_DIR=''
+MAP_FROM=''
+MAP_TO=''
+MAP_SNAP=''
+
+# The directory handle $2 of plan entry $1 should open in, or empty to inherit.
+pane_dir() { # tab_json handle
+  [ -z "$FLAT_DIR" ] || { printf '%s' "$FLAT_DIR"; return 0; }
+  [ -n "$MAP_TO" ] || return 0
+  src=$(printf '%s' "$1" | jq -r --arg h "$2" '.panes[$h] // ""' 2>/dev/null)
+  [ -n "$src" ] || return 0
+  src_dir=$(pane_cwd "$MAP_SNAP" "$src")
+  [ -n "$src_dir" ] || return 0
+  remap_dir "$src_dir" "$MAP_FROM" "$MAP_TO"
+}
+
 # With $cwd set, every pane is spawned there instead of inheriting the target
 # workspace's own directory.
 do_clone() { # snap source target [cwd]
   snap=$1; source=$2; target=$3; cwd=${4:-}
+  FLAT_DIR=$cwd
+  MAP_FROM=''
+  MAP_TO=''
+  MAP_SNAP=$snap
+  if [ -z "$FLAT_DIR" ]; then
+    roots=$(remap_roots "$snap" "$source" "$target")
+    map_from=$(printf '%s\n' "$roots" | sed -n 1p)
+    map_to=$(printf '%s\n' "$roots" | sed -n 2p)
+    # The new checkout has to be on disk: every remapped directory is under it,
+    # and a --cwd that does not exist costs the pane, not just its directory.
+    if [ -n "$map_from" ] && [ -n "$map_to" ] && [ -d "$map_to" ]; then
+      MAP_FROM=$map_from
+      MAP_TO=$map_to
+    fi
+  fi
   plan=$(jq -n --argjson snap "$snap" --arg ws "$source" -f "$PLAN_JQ" 2>/dev/null)
   [ -n "$plan" ] || { log "no plan for $source"; return 0; }
   ntabs=$(printf '%s' "$plan" | jq 'length' 2>/dev/null)
@@ -329,11 +484,24 @@ do_clone() { # snap source target [cwd]
   fi
   reopening=''
   [ "$reopen" -eq 1 ] && reopening=', reopening apps'
-  log "clone $source -> $target ($ntabs tabs)${cwd:+ in $cwd}$reopening"
+  remapping=''
+  [ -n "$MAP_TO" ] && remapping=", panes under $MAP_FROM -> $MAP_TO"
+  log "clone $source -> $target ($ntabs tabs)${cwd:+ in $cwd}$remapping$reopening"
 
   # Display order, not .number — see lib/plan.jq. (A fresh target has exactly one
   # tab, so this only matters if that ever stops being true.)
   root_tab=$(snapshot | jq -r --arg w "$target" '[.tabs[] | select(.workspace_id == $w)][0].tab_id')
+
+  # The first tab normally reuses the workspace's root tab, whose pane is already
+  # running in the workspace's own directory — a shell that exists cannot be
+  # respawned somewhere else. So it is only reused when that is where the first
+  # pane belongs; otherwise every tab is built fresh, in its own directory, and
+  # the root tab is closed once they are all there.
+  reuse_root=1
+  first_dir=$(pane_dir "$(printf '%s' "$plan" | jq -c '.[0]')" 0)
+  if [ -n "$first_dir" ] && ! same_dir "$first_dir" "$(ws_dir "$snap" "$target")"; then
+    reuse_root=0
+  fi
 
   i=0
   printf '%s' "$plan" | jq -c '.[]' | while IFS= read -r tab; do
@@ -346,16 +514,12 @@ do_clone() { # snap source target [cwd]
       src_tab=$(printf '%s' "$tab" | jq -r '.source_tab // ""')
       [ -n "$src_tab" ] && cmds=$(tab_commands "$snap" "$src_tab")
     fi
-    # Normally the first tab reuses the workspace's existing root tab. That pane
-    # is already running in the workspace's own directory and can't be respawned
-    # elsewhere, so when a directory was chosen every tab is created fresh and
-    # the root tab is closed once they exist.
-    if [ "$i" -eq 0 ] && [ -z "$cwd" ]; then
+    if [ "$i" -eq 0 ] && [ "$reuse_root" -eq 1 ]; then
       cur_tab=$root_tab
       cur_pane=$(snapshot | jq -r --arg t "$root_tab" '[.panes[] | select(.tab_id == $t) | .pane_id][0] // empty')
       [ -n "$label" ] && "$HERDR" tab rename "$root_tab" "$label" >/dev/null 2>&1
     else
-      new_tab=$(create_tab "$target" "$label" "$cwd")
+      new_tab=$(create_tab "$target" "$label" "$(pane_dir "$tab" 0)")
       [ -n "$new_tab" ] || { log "tab create failed"; i=$((i + 1)); continue; }
       cur_tab=$new_tab
       cur_pane=$(tab_root_pane "$new_tab")
@@ -372,7 +536,7 @@ do_clone() { # snap source target [cwd]
       c=$(printf '%s'  "$step" | jq -r '.child')
       eval "pp=\$H$p"
       # shellcheck disable=SC2154  # pp is assigned by the eval on the line above
-      np=$(split_pane "$target" "$pp" "$d" "$r" "$cwd")
+      np=$(split_pane "$target" "$pp" "$d" "$r" "$(pane_dir "$tab" "$c")")
       if [ -n "$np" ]; then
         eval "H$c=\$np"
       else
@@ -387,7 +551,7 @@ do_clone() { # snap source target [cwd]
   done
   # The rebuilt tabs are all in place, so the original root tab (still sitting in
   # the workspace's own directory) has done its job.
-  [ -n "$cwd" ] && "$HERDR" tab close "$root_tab" >/dev/null 2>&1
+  [ "$reuse_root" -eq 0 ] && "$HERDR" tab close "$root_tab" >/dev/null 2>&1
 
   # Show the first tab — but only if the user is already on this workspace, so a
   # workspace built in the background (CLI create) never steals their focus.

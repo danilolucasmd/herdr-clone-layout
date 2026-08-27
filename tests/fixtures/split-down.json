@@ -23,6 +23,6 @@
     ]
   },
   "expected": [
-    { "label": "server", "steps": [ { "parent": 0, "dir": "down", "ratio": 0.4, "child": 1 } ] }
+    { "label": "server", "steps": [ { "parent": 0, "dir": "down", "ratio": 0.4, "child": 1 } ], "panes": { "0": "w1:p1", "1": "w1:p2" } }
   ]
 }

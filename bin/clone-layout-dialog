@@ -7,7 +7,8 @@
 #
 # A worktree is only asked the first of those: its directory was settled when the
 # checkout was made, and the layout worth having there is the one you came from,
-# panes and all. So the directory answer is a new-workspace question.
+# panes and all — each one in the directory it was in, read off the new checkout
+# rather than the old one. So the directory answer is a new-workspace question.
 #
 # Cancelling closes a plain new workspace, since nothing has been put in it yet.
 # A worktree is left alone: it is a checkout on disk with a branch of its own.
@@ -328,7 +329,15 @@ render() {
 
   row_label 0 'clone current layout'
   if [ "$enabled" -eq 1 ]; then
-    printf '      %sthe same tabs and splits as %s%s\r\n\r\n' "$D" "$(abbrev_path "$DIR")" "$R"
+    # A worktree is the same tree under a different root, so its panes come over
+    # with the directories they were in — say so, since it is the difference
+    # between a pane at the top of the checkout and the one it was cloned from.
+    if [ "$KIND" = worktree ]; then
+      printf '      %sthe same tabs, splits and pane directories as %s%s\r\n\r\n' \
+        "$D" "$(abbrev_path "$DIR")" "$R"
+    else
+      printf '      %sthe same tabs and splits as %s%s\r\n\r\n' "$D" "$(abbrev_path "$DIR")" "$R"
+    fi
   else
     # This line describes what row 0 would do, so it is the right place to say
     # that the box below has taken it off the table — and what Enter does now

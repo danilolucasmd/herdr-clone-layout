@@ -33,7 +33,8 @@
         { "parent": 0, "dir": "right", "ratio": 0.5, "child": 1 },
         { "parent": 0, "dir": "down", "ratio": 0.5, "child": 2 },
         { "parent": 1, "dir": "down", "ratio": 0.5, "child": 3 }
-      ]
+      ],
+      "panes": { "0": "w1:p1", "1": "w1:p3", "2": "w1:p2", "3": "w1:p4" }
     }
   ]
 }

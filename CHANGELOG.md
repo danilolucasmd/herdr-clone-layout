@@ -4,6 +4,44 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0]
+
+### Added
+
+- **A worktree's panes open in the directories they were in.** A worktree is the
+  same tree under a different root, so a pane in `repo/product/dashboard` belongs
+  in `worktree/product/dashboard` — but a pane inherits the workspace's own
+  directory, so every one of them used to land at the top of the checkout and had
+  to be walked back down by hand. Each pane's directory is now measured against
+  the checkout it was cloned from and read off the new one. A pane that was
+  outside that checkout — notes in `$HOME`, a second repository — keeps the
+  directory it had, since it is not part of the tree being copied. A directory the
+  new checkout does not have, an ignored build directory or one that only exists
+  on the branch you came from, opens as deep as it can instead: the nearest parent
+  that is there, never above the checkout, because a pane opened a level up beats
+  a pane that fails to open. A directory reached through a symlink still counts as
+  inside the checkout, so it crosses over rather than being left behind in the one
+  it came from.
+
+  Only a new *linked worktree* is treated this way, and only when the workspace it
+  was cloned from is a checkout of the same repository: that is the one case where
+  the two directories are known to hold the same tree. A plain new workspace's
+  panes inherit its directory exactly as before, and a directory typed into the
+  popup still puts every pane in it — choosing one is what that row is for.
+
+### Changed
+
+- **A worktree's popup says what it clones.** The line under `clone current
+  layout` read `the same tabs and splits as <dir>`, which is now half the story
+  there: it reads `the same tabs, splits and pane directories as <dir>`. A plain
+  new workspace's popup is unchanged.
+- **`lib/plan.jq` reports which source pane each handle stands for.** The plan
+  described the shape of a tab and nothing about what filled it, so there was no
+  way to ask where a given pane in it had been sitting. Each tab entry now carries
+  a `panes` map from handle to source pane id, alongside the split steps it
+  already had. Geometry is still all the plan decides — the map is identity, not
+  behaviour.
+
 ## [0.7.0]
 
 ### Added

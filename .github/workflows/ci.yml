@@ -19,7 +19,8 @@ jobs:
         run: |
           sudo apt-get install -y shellcheck
           shellcheck --shell=sh bin/clone-layout bin/clone-layout-dialog \
-            tests/run.sh tests/known.sh tests/prompt.sh tests/keys.sh tests/apps.sh
+            tests/run.sh tests/known.sh tests/prompt.sh tests/keys.sh tests/apps.sh \
+            tests/dirs.sh
 
       - name: Manifest is valid TOML
         run: python3 -c "import tomllib,sys; tomllib.load(open('herdr-plugin.toml','rb'))"
@@ -49,3 +50,8 @@ jobs:
       # pane that was cloned from it.
       - name: Reopen-apps tests
         run: ./tests/apps.sh
+
+      # Carrying each pane's directory across to a new checkout, and the clone
+      # that opens the panes there.
+      - name: Pane directory tests
+        run: ./tests/dirs.sh

@@ -3,13 +3,22 @@
 #   jq -n --argjson snap <.result.snapshot> --arg ws <workspace_id> -f plan.jq
 #
 # Output: a JSON array of tabs in tab-bar display order, each:
-#   { "label": <string>, "steps": [ {parent,dir,ratio,child}, ... ] }
+#   { "label": <string>,
+#     "steps": [ {parent,dir,ratio,child}, ... ],
+#     "panes": { "<handle>": <source pane_id>, ... } }
 #
 # Replay contract: a fresh tab starts as one pane = handle 0. For each step, in
 # order, split handle[parent] along <dir> ("right"|"down") at <ratio>; the pane
 # thereby created becomes handle[child]. herdr's ratio is the fraction the
 # ORIGINAL (left/top) pane keeps, which is exactly what the snapshot reports, so
 # it is passed through untouched. Panes carry no commands (geometry only).
+#
+# "panes" names the pane each handle is a copy of, so a caller that wants to
+# start one somewhere — in the matching directory of a new checkout, say — can
+# ask the snapshot about the pane it came from. A handle is the area a split
+# leaves behind, and the pane that ends up occupying it is the leftmost/topmost
+# leaf below that area: splitting handle 0 again keeps handle 0 on the pane that
+# stays in the corner, which is the one the handle was standing for all along.
 
 def rect_eq($a; $b):
   ($a.x == $b.x) and ($a.y == $b.y) and ($a.width == $b.width) and ($a.height == $b.height);
@@ -62,17 +71,25 @@ def node($L; $area):
         end
     end;
 
-# Linearize the tree into ordered split steps with integer pane handles.
-# $h is the handle of this node's area; $next is the next free handle.
+# Linearize the tree into ordered split steps with integer pane handles, and
+# report which source pane each handle stands for.
+# $h is the handle of this node's area; $next is the next free handle. A leaf is
+# where a handle comes to rest, so that is where the pairing is recorded — child
+# A keeps its parent's handle, so descending the A side never reassigns it.
 def lin($n; $h; $next):
-  if ($n | has("leaf")) then {steps: [], next: $next}
+  if ($n | has("leaf")) then {steps: [], next: $next, handles: [{h: $h, pane: $n.leaf}]}
   else
     $next as $cb
     | lin($n.a; $h; ($next + 1)) as $la          # child A keeps this node's handle
     | lin($n.b; $cb; $la.next) as $lb            # child B is the newly split pane
     | {steps: ([{parent: $h, dir: $n.dir, ratio: $n.ratio, child: $cb}] + $la.steps + $lb.steps),
-       next: $lb.next}
+       next: $lb.next,
+       handles: ($la.handles + $lb.handles)}
   end;
+
+# handles -> { "<handle>": <pane_id> }, in handle order.
+def handle_map($hs):
+  reduce ($hs | sort_by(.h))[] as $e ({}; .[$e.h | tostring] = $e.pane);
 
 # Snapshot array order is the tab *display* order — the order herdr paints the
 # tab bar in. `.number` is a per-tab identity that stays glued to its tab when
@@ -84,7 +101,8 @@ def lin($n; $h; $next):
     | .tab_id as $tid
     | ([$snap.layouts[] | select(.tab_id == $tid)] | first) as $L
     | if ($L == null) or (($L.panes | length) == 0)
-      then {label: $label, steps: []}
-      else {label: $label, steps: lin(node($L; bbox($L.panes)); 0; 1).steps}
+      then {label: $label, steps: [], panes: {}}
+      else lin(node($L; bbox($L.panes)); 0; 1) as $l
+           | {label: $label, steps: $l.steps, panes: handle_map($l.handles)}
       end
   )

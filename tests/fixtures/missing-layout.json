@@ -21,7 +21,7 @@
     ]
   },
   "expected": [
-    { "label": "agent", "steps": [] },
-    { "label": "ghost", "steps": [] }
+    { "label": "agent", "steps": [], "panes": { "0": "w1:p1" } },
+    { "label": "ghost", "steps": [], "panes": {} }
   ]
 }

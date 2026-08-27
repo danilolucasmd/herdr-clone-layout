@@ -17,7 +17,8 @@ working in *is* the template.
 herdr-clone-layout is a [herdr](https://herdr.dev) plugin. Create a workspace or
 a worktree — from the CLI *or* the herdr TUI — and it opens with the **same tabs**
 (labels and order) and the **same pane splits** (directions and ratios) as the
-workspace you were just in.
+workspace you were just in. A worktree gets the **same pane directories** too,
+read off its own checkout.
 
 - **Zero configuration.** Nothing to declare. Rearrange your panes today and
   tomorrow's worktrees follow along automatically.
@@ -25,6 +26,10 @@ workspace you were just in.
   looking at it you get a popup first — where the panes open, and what the clone
   copies. One built in the background clones silently, since nobody's there to
   answer.
+- **A worktree's panes keep their directories.** A worktree is the same tree
+  under a different root, so a pane in `repo/product/dashboard` opens in
+  `worktree/product/dashboard` — not at the top of the checkout. Panes that were
+  outside the repo stay where they were.
 - **The apps come with it.** Each pane reopens whatever it was running — your
   editor, your dev server, your agent. Untick the second box to get bare shells
   instead.
@@ -120,7 +125,7 @@ It's the same popup, titled `new worktree`, minus the directory row:
   new worktree
 
   > clone current layout
-      the same tabs and splits as ~/Code/herdr-clone-layout
+      the same tabs, splits and pane directories as ~/Code/herdr-clone-layout
 
     options
     [x] clone layouts into new workspaces
@@ -136,8 +141,53 @@ workspace, not about a worktree, so it isn't asked here: **Enter** clones, and t
 two boxes are all there is left to decide. Typing a path does nothing, since
 there's no field for it to go in.
 
+Its panes come over in the directories they were in, named against the new
+checkout — see [Pane directories in a worktree](#pane-directories-in-a-worktree).
+
 The other difference is [cancelling](#cancelling): a worktree is never thrown
 away.
+
+### Pane directories in a worktree
+
+A worktree is the same tree under a different root, so a pane's directory means
+the same thing in both — one level down from `repo` or one level down from
+`worktree`. Every pane of a worktree's clone opens in the directory its source
+pane was in, named against the new checkout:
+
+```
+  ~/Code/credit_card                    ~/.herdr/worktrees/credit_card/fix-totals
+  ┌──────────────────┬──────────────┐   ┌──────────────────┬──────────────┐
+  │ product/dashboard│ (repo root)  ├──►│ product/dashboard│ (repo root)  │
+  ├──────────────────┴──────────────┤   ├──────────────────┴──────────────┤
+  │ src/components                  │   │ src/components                  │
+  └─────────────────────────────────┘   └─────────────────────────────────┘
+```
+
+The rules, in full:
+
+- **Only a new linked worktree** is treated this way, and only when the workspace
+  it was cloned from is a checkout of the **same repository** — that is the one
+  case where both directories are known to hold the same tree. A plain new
+  workspace's panes inherit its own directory, as they always have.
+- **A pane outside the checkout keeps the directory it had.** Notes in `$HOME`, a
+  second repository: none of that is part of the tree being copied, so it is left
+  exactly where it was rather than mapped onto a path in the new checkout.
+- **A directory the new checkout doesn't have opens as deep as it can.** An
+  ignored build directory, or one that only exists on the branch you came from,
+  falls back to the nearest parent that does exist — never above the checkout
+  itself. A pane opened a level up beats a pane that fails to open.
+- **Symlinks don't hide the checkout.** A pane whose directory reaches the
+  checkout through a symlink is still recognised as being inside it, so it crosses
+  over rather than being left behind in the checkout it came from.
+- **A directory you type into the popup still wins.** That row is a
+  new-workspace question, and choosing a directory means *every* pane opens there
+  — see [The dialog](#the-dialog).
+
+Because a pane can't be respawned somewhere else once it exists, a first pane
+that belongs in a subdirectory means every tab is created fresh and the
+workspace's original root tab is closed. A first pane that belongs at the top of
+the checkout is already where it should be, so that tab is reused and renamed as
+before.
 
 ### Reopening the apps
 
@@ -281,7 +331,9 @@ So the hook listens for all three. On any of them it:
    got there first.
 6. Reconstructs the source's split tree from the snapshot's pane/split
    rectangles, linearizes it into ordered split steps, and replays them with
-   `herdr tab create` / `herdr pane split`.
+   `herdr tab create` / `herdr pane split`. For a worktree, each step is given
+   the `--cwd` its source pane was in, measured against the checkout that pane
+   belonged to and read off the new one.
 7. With the apps box ticked, reads each source tab's pane commands from
    `herdr pane process-info` before rebuilding it, then types them into the
    rebuilt panes with `herdr pane run`, pairing the two tabs' panes by position.
@@ -298,14 +350,17 @@ So the hook listens for all three. On any of them it:
                                             step   → herdr pane split --direction --ratio
 ```
 
-With a directory chosen, tab 0 is created fresh like the rest and the
-workspace's original root tab is closed — that pane is already running in the
-workspace's own directory and can't be respawned somewhere else.
+With a directory chosen — or a first pane that belongs in a subdirectory of a
+worktree — tab 0 is created fresh like the rest and the workspace's original root
+tab is closed: that pane is already running in the workspace's own directory and
+can't be respawned somewhere else.
 
 The geometry analysis lives in [`lib/plan.jq`](./lib/plan.jq): herdr reports each
 pane and split as a rectangle, and the plan rebuilds the binary split tree from
 those rectangles, then flattens it into steps like *"split handle 0 to the right
-at 0.65; the pane that creates becomes handle 1"*. It's the part with real logic,
+at 0.65; the pane that creates becomes handle 1"*. It also names the source pane
+each handle stands for, which is what lets a handle be given the directory its
+own pane was in. It's the part with real logic,
 so it has [tests](#development).
 
 ## Manual duplicate
@@ -352,7 +407,7 @@ what you want, see
 | Cloned | Not cloned |
 | --- | --- |
 | Tab labels and their order | Pane titles |
-| Pane split directions (`right` / `down`) | Working directories (each pane starts in the new workspace's own cwd, even the ones whose command was running somewhere else) |
+| Pane split directions (`right` / `down`) | Working directories, *except* in a worktree — a new workspace's panes start in its own cwd ([details](#pane-directories-in-a-worktree)) |
 | Pane split ratios | Which pane/tab was focused (the first tab is shown) |
 | The command each pane was running — *with the second box ticked* | Scrollback, environment, and anything else a process was holding: a reopened command is a new process |
 
@@ -465,6 +520,7 @@ log.
 ./tests/prompt.sh       # who gets asked, how paths are read, the remembered box
 ./tests/keys.sh         # the popup driven by its own keys
 ./tests/apps.sh         # reading pane commands back, and where they get typed
+./tests/dirs.sh         # carrying pane directories across to a new checkout
 ```
 
 `run.sh` covers `lib/plan.jq` — the snapshot-geometry analysis — against fixtures
